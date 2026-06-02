@@ -1,0 +1,6 @@
+{
+  "name": "سَكِينَة - منصة الدعم النفسي الرقمي الآمن",
+  "description": "منصة صحية نفسية رقمية مخصصة لدعم المتضررين في قطاع غزة بسرية وأمان تام وبدون أي تسجيل للبيانات الشخصية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

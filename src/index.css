@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Tajawal", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-primary-sage: #4A6B5D;
+  --color-secondary-beige: #F4F7F5;
+  --color-accent-gold: #D4A373;
+}
+
+body {
+  font-family: "Tajawal", "Inter", system-ui, sans-serif;
+}
