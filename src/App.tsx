@@ -286,6 +286,7 @@ const ROOM_THEMES = [
 export default function App() {
   const [lang, setLang] = useState<"ar" | "en">("ar");
   const [currentView, setCurrentView] = useState<"home" | "consult" | "track" | "rooms" | "private-chat" | "doctor" | "offline" | "tips">("home");
+  const [userRole, setUserRole] = useState<"patient" | "doctor" | null>(null);
 
   // Connection Simulation, Ultra-lite & Stealth States
   const [isSimulatedOffline, setIsSimulatedOffline] = useState(false);
@@ -552,8 +553,31 @@ export default function App() {
     }
   }, [currentView]);
 
+  const handleRoleLogout = () => {
+    localStorage.removeItem("sakina_user_role");
+    setUserRole(null);
+    // Securely clear any physician login session too
+    localStorage.removeItem("sakina_doc_token");
+    localStorage.removeItem("sakina_doc_name");
+    localStorage.removeItem("sakina_doc_specialties");
+    setDoctorLoggedIn(false);
+    setDoctorToken("");
+    setDoctorName("");
+    setDoctorSpecialties([]);
+    setCurrentView("home");
+  };
+
   // Local storage setup on mount for persistent pseudonyms and sessions
   useEffect(() => {
+    // Retrieve previous user role if any
+    const savedUserRole = localStorage.getItem("sakina_user_role") as "patient" | "doctor" | null;
+    if (savedUserRole) {
+      setUserRole(savedUserRole);
+      if (savedUserRole === "doctor") {
+        setCurrentView("doctor");
+      }
+    }
+
     // Generate static token for browser user block/pull tracking
     let token = localStorage.getItem("sakina_token");
     if (!token) {
@@ -952,6 +976,131 @@ export default function App() {
   // Helper dictionary accessor
   const t = translations[lang];
 
+  if (userRole === null) {
+    return (
+      <div className="min-h-screen bg-[#F4F7F5] flex flex-col font-sans select-none antialiased" dir={lang === "ar" ? "rtl" : "ltr"}>
+        {/* Connection simulator / speed bar */}
+        <div className="bg-[#4A6B5D] text-[#F4F7F5] py-2 px-3 text-center text-xs font-medium tracking-wide flex justify-between items-center relative shadow-xs border-[#3b5549]">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-[#D4A373] animate-pulse" />
+            <span className="text-[11px] md:text-xs">
+              {lang === "ar" 
+                ? "⚡ منصة سكينة: رعاية نفسية مشفرة بالكامل وخفيفة البيانات" 
+                : "⚡ Sakina: Fully encrypted psychiatric platform optimized for low data"}
+            </span>
+          </div>
+          
+          <button 
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-white transition-colors cursor-pointer"
+            onClick={() => setLang(l => l === "ar" ? "en" : "ar")}
+          >
+            <Globe className="h-3.5 w-3.5" />
+            <span>{lang === "ar" ? "English" : "العربية"}</span>
+          </button>
+        </div>
+
+        {/* Outer container */}
+        <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8 bg-linear-to-b from-[#F4F7F5] via-white to-[#E8EFEA]">
+          <div className="max-w-3xl w-full text-center space-y-8 my-auto">
+            
+            {/* Logo and Headings */}
+            <div className="space-y-4">
+              <div className="mx-auto bg-[#4A6B5D] h-16 w-16 md:h-20 md:w-20 rounded-2xl flex items-center justify-center text-white shadow-md animate-bounce duration-1000">
+                <span className="font-extrabold text-3xl md:text-4xl mt-1">س</span>
+              </div>
+              
+              <div className="space-y-2">
+                <h1 className="text-3xl md:text-4xl font-extrabold text-[#4A6B5D] tracking-tight">
+                  {lang === "ar" ? "مرحباً بك في مَنصّة سَكِينَة" : "Welcome to Sakina Sanctuary"}
+                </h1>
+                <p className="text-sm md:text-base text-gray-600 max-w-lg mx-auto leading-relaxed">
+                  {lang === "ar" 
+                    ? "بوابتك الآمنة والمشفرة بالكامل للدعم النفسي والصمود في قطاع غزة. خصوصيتك هي أولويتنا القصوى، فلا نطلب أي بيانات شخصية."
+                    : "Your secure psychological support sanctuary in Gaza. No personal data is stored, and everything is private."}
+                </p>
+              </div>
+            </div>
+
+            {/* Selection Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
+              
+              {/* Option A: Patient */}
+              <button
+                onClick={() => {
+                  localStorage.setItem("sakina_user_role", "patient");
+                  setUserRole("patient");
+                  setCurrentView("home");
+                }}
+                className="group p-6 md:p-8 bg-white hover:bg-emerald-50/20 border-2 border-gray-200 hover:border-[#4A6B5D]/60 rounded-3xl text-right transition-all duration-300 hover:shadow-lg active:scale-98 cursor-pointer flex flex-col items-start gap-4"
+              >
+                <div className="bg-emerald-100 text-[#4A6B5D] p-3.5 rounded-2xl group-hover:scale-110 transition-transform">
+                  <Heart className="h-8 w-8" />
+                </div>
+                
+                <div className="space-y-1.5 text-right w-full">
+                  <h3 className="text-lg font-bold text-[#2B2D42] group-hover:text-[#4A6B5D] transition-colors">
+                    {lang === "ar" ? "الدخول كمستفيد / مريض 🧑‍⚕️" : "Enter as Beneficiary / Patient 🧑‍⚕️"}
+                  </h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    {lang === "ar"
+                      ? "اطلب استشارة خاصة وسرية، تحدث في غرف الدعم النفسي الجماعي مع رفاقك، تابع نصائح الأطباء وطريقة التعامل مع الهلع مجاناً."
+                      : "Send private confidential inquiries, converse in community therapeutic rooms, read coping strategies, and more."}
+                  </p>
+                </div>
+
+                <div className="text-[11px] font-bold text-[#4A6B5D] mt-2 flex items-center gap-1 group-hover:translate-x-[-4px] transition-transform">
+                  <span>{lang === "ar" ? "ابدأ رحلة التعافي والصبر" : "Begin Coping Journey"}</span>
+                  <span>←</span>
+                </div>
+              </button>
+
+              {/* Option B: Doctor */}
+              <button
+                onClick={() => {
+                  localStorage.setItem("sakina_user_role", "doctor");
+                  setUserRole("doctor");
+                  setCurrentView("doctor");
+                }}
+                className="group p-6 md:p-8 bg-white hover:bg-slate-50/40 border-2 border-gray-200 hover:border-[#2b2d42]/60 rounded-3xl text-right transition-all duration-300 hover:shadow-lg active:scale-98 cursor-pointer flex flex-col items-start gap-4"
+              >
+                <div className="bg-blue-100 text-[#2B2D42] p-3.5 rounded-2xl group-hover:scale-110 transition-transform">
+                  <Lock className="h-8 w-8" />
+                </div>
+                
+                <div className="space-y-1.5 text-right w-full">
+                  <h3 className="text-lg font-bold text-[#2B2D42] group-hover:text-[#4A6B5D] transition-colors">
+                    {lang === "ar" ? "بوابة الأطباء والأخصائيين النفسيين 🩺" : "Doctors & Mental Specialists Portal 🩺"}
+                  </h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    {lang === "ar"
+                      ? "تسجيل دخول الأخصائيين المعتمدين، متابعة حالات المرضى والاستشارات الواردة والرد عليها وتدقيق المخططات البيانية لمستوى الصمود."
+                      : "Access the specialist portal to answer cases, moderate chat rooms, view resilience graphs, and publish certified advice."}
+                  </p>
+                </div>
+
+                <div className="text-[11px] font-bold text-[#2B2D42] mt-2 flex items-center gap-1 group-hover:translate-x-[-4px] transition-transform">
+                  <span>{lang === "ar" ? "لوحة تحكم الأخصائي" : "Access Practitioner Terminal"}</span>
+                  <span>←</span>
+                </div>
+              </button>
+
+            </div>
+
+            {/* Bottom Footer Details */}
+            <div className="text-[10px] md:text-xs text-gray-400 font-medium pt-4 max-w-md mx-auto leading-relaxed">
+              <p>
+                {lang === "ar"
+                  ? "🔒 يتم تشفير جميع الجلسات والاستشارات بالكامل بطبقة حماية عسكرية. لا يتم تخزين أي معلومات تحديد هوية خلف جهازك."
+                  : "🔒 Military-grade client privacy enabled. Absolutely no personally identifiable information (PII) is recorded."}
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isUltraLite) {
     return (
       <div className="min-h-screen bg-white text-black p-4 font-mono select-none" dir={lang === "ar" ? "rtl" : "ltr"}>
@@ -1232,24 +1381,29 @@ export default function App() {
 
           {/* Nav Links bar */}
           <nav className="hidden md:flex items-center gap-5 text-sm font-medium">
-            <button 
-              className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "home" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
-              onClick={() => { setCurrentView("home"); setSelectedRoomId(null); }}
-            >
-              {t.navHome}
-            </button>
-            <button 
-              className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "consult" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
-              onClick={() => { setCurrentView("consult"); setSelectedRoomId(null); }}
-            >
-              {t.navConsult}
-            </button>
-            <button 
-              className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "track" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
-              onClick={() => { setCurrentView("track"); setSelectedRoomId(null); }}
-            >
-              {t.navTrack}
-            </button>
+            {userRole === "patient" && (
+              <>
+                <button 
+                  className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "home" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
+                  onClick={() => { setCurrentView("home"); setSelectedRoomId(null); }}
+                >
+                  {t.navHome}
+                </button>
+                <button 
+                  className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "consult" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
+                  onClick={() => { setCurrentView("consult"); setSelectedRoomId(null); }}
+                >
+                  {t.navConsult}
+                </button>
+                <button 
+                  className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "track" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
+                  onClick={() => { setCurrentView("track"); setSelectedRoomId(null); }}
+                >
+                  {t.navTrack}
+                </button>
+              </>
+            )}
+
             <button 
               className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "rooms" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
               onClick={() => { setCurrentView("rooms"); setSelectedRoomId(null); }}
@@ -1262,32 +1416,29 @@ export default function App() {
             >
               🌱 {lang === "ar" ? "نصائح وإرشادات الصمود" : "Tips & Recovery"}
             </button>
-            <button 
-              className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "offline" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
-              onClick={() => { setCurrentView("offline"); setSelectedRoomId(null); }}
-            >
-              📡 {lang === "ar" ? "طوارئ دون إنترنت" : "Offline Support"}
-            </button>
-            <button 
-              className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "doctor" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
-              onClick={() => { setCurrentView("doctor"); setSelectedRoomId(null); }}
-            >
-              {t.navDoctor}
-            </button>
+
+            {userRole === "patient" && (
+              <button 
+                className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "offline" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
+                onClick={() => { setCurrentView("offline"); setSelectedRoomId(null); }}
+              >
+                📡 {lang === "ar" ? "طوارئ دون إنترنت" : "Offline Support"}
+              </button>
+            )}
+
+            {userRole === "doctor" && (
+              <button 
+                className={`pb-1 border-b-2 hover:text-[#4A6B5D] transition-all cursor-pointer ${currentView === "doctor" ? "border-[#4A6B5D] text-[#4A6B5D]" : "border-transparent text-[#2B2D42] opacity-80"}`}
+                onClick={() => { setCurrentView("doctor"); setSelectedRoomId(null); }}
+              >
+                📊 {t.navDoctor}
+              </button>
+            )}
           </nav>
 
           {/* Action Tools: language switcher + CTA buttons */}
           <div className="flex items-center gap-2">
             
-            {/* Text Only / Ultra-lite switch */}
-            <button 
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-xs font-semibold text-[#2B2D42] hover:border-gray-400 transition-colors cursor-pointer"
-              onClick={() => setIsUltraLite(true)}
-              title={lang === "ar" ? "التحول لواجهة نصية ضعيفة البيانات لشبكات 2G" : "Switch to ultra low-data text view"}
-            >
-              <span>{lang === "ar" ? "نسخة النص فقط" : "Text Only"}</span>
-            </button>
-
             {/* Lang Toggle */}
             <button 
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-white text-xs font-semibold hover:border-gray-400 text-[#2B2D42] transition-colors cursor-pointer"
@@ -1297,30 +1448,49 @@ export default function App() {
               <span>{lang === "ar" ? "English" : "العربية"}</span>
             </button>
 
-            {/* Main CTA */}
-            <button 
-              className="px-4 py-2 bg-[#4A6B5D] hover:bg-[#3b5549] text-[#F4F7F5] rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-              onClick={() => { setCurrentView("consult"); setSelectedRoomId(null); }}
-            >
-              {t.ctaConsultNow}
-            </button>
+            {/* Main CTA (Only for patient) */}
+            {userRole === "patient" && (
+              <button 
+                className="px-4 py-2 bg-[#4A6B5D] hover:bg-[#3b5549] text-[#F4F7F5] rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+                onClick={() => { setCurrentView("consult"); setSelectedRoomId(null); }}
+              >
+                {t.ctaConsultNow}
+              </button>
+            )}
+
+            {/* Log Out button */}
+            {userRole && (
+              <button
+                onClick={handleRoleLogout}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 hover:border-rose-300 transition-colors cursor-pointer active:scale-95"
+                title={lang === "ar" ? "تسجيل الخروج والعودة لشاشة الاختيار" : "Logout and return to role selection"}
+              >
+                <LogOut className="h-4.5 w-4.5" />
+                <span>{lang === "ar" ? "خروج" : "Exit"}</span>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Mobile Navigation bar */}
         <div className="flex md:hidden bg-white/80 border-t border-gray-200 justify-around py-2.5 text-xs text-[#2B2D42]">
-          <button onClick={() => { setCurrentView("home"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "home" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
-            <Heart className="h-4 w-4" />
-            <span>{t.navHome}</span>
-          </button>
-          <button onClick={() => { setCurrentView("consult"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "consult" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
-            <ShieldCheck className="h-4 w-4" />
-            <span>{t.navConsult}</span>
-          </button>
-          <button onClick={() => { setCurrentView("track"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "track" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
-            <Search className="h-4 w-4" />
-            <span>{t.navTrack}</span>
-          </button>
+          {userRole === "patient" && (
+            <>
+              <button onClick={() => { setCurrentView("home"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "home" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
+                <Heart className="h-4 w-4" />
+                <span>{t.navHome}</span>
+              </button>
+              <button onClick={() => { setCurrentView("consult"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "consult" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
+                <ShieldCheck className="h-4 w-4" />
+                <span>{t.navConsult}</span>
+              </button>
+              <button onClick={() => { setCurrentView("track"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "track" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
+                <Search className="h-4 w-4" />
+                <span>{t.navTrack}</span>
+              </button>
+            </>
+          )}
+
           <button onClick={() => { setCurrentView("rooms"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "rooms" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
             <Users className="h-4 w-4" />
             <span>{t.navRooms}</span>
@@ -1329,14 +1499,20 @@ export default function App() {
             <HeartPulse className="h-4 w-4" />
             <span>{lang === "ar" ? "الإرشادات" : "Tips"}</span>
           </button>
-          <button onClick={() => { setCurrentView("offline"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "offline" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
-            <AlertCircle className="h-4 w-4" />
-            <span>{lang === "ar" ? "الطوارئ" : "Emergency"}</span>
-          </button>
-          <button onClick={() => { setCurrentView("doctor"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "doctor" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
-            <Lock className="h-4 w-4" />
-            <span>{t.navDoctor}</span>
-          </button>
+
+          {userRole === "patient" && (
+            <button onClick={() => { setCurrentView("offline"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "offline" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
+              <AlertCircle className="h-4 w-4" />
+              <span>{lang === "ar" ? "الطوارئ" : "Emergency"}</span>
+            </button>
+          )}
+
+          {userRole === "doctor" && (
+            <button onClick={() => { setCurrentView("doctor"); setSelectedRoomId(null); }} className={`flex flex-col items-center gap-0.5 cursor-pointer ${currentView === "doctor" ? "text-[#4A6B5D] font-bold" : "opacity-70"}`}>
+              <Lock className="h-4 w-4" />
+              <span>{t.navDoctor}</span>
+            </button>
+          )}
         </div>
       </header>
 
