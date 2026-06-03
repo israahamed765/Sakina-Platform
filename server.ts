@@ -275,6 +275,18 @@ function loadDB() {
       if (!db.tipsStories) {
         db.tipsStories = getInitialDB().tipsStories || [];
       }
+      if (!db.consultations) {
+        db.consultations = getInitialDB().consultations || [];
+      }
+      if (!db.messages) {
+        db.messages = getInitialDB().messages || [];
+      }
+      if (!db.blockedTokens) {
+        db.blockedTokens = [];
+      }
+      if (!db.privateChats) {
+        db.privateChats = [];
+      }
     } else {
       saveDB();
     }
@@ -557,13 +569,19 @@ function requireDoctorAuth(req: express.Request, res: express.Response, next: ex
 
 // 4. Doctor Endpoints
 app.get("/api/doctor/consultations", requireDoctorAuth, (req, res) => {
-  // Decrypt on the fly for Authorized Doctor
-  const decryptedItems = db.consultations.map(c => ({
-    ...c,
-    textDecrypted: decryptText(c.textEncrypted),
-    replyDecrypted: c.replyEncrypted ? (c.pinHash ? decryptReply(c.replyEncrypted, c.pinHash) : decryptText(c.replyEncrypted)) : undefined
-  }));
-  res.json({ status: "success", consultations: decryptedItems });
+  try {
+    const consultations = db.consultations || [];
+    // Decrypt on the fly for Authorized Doctor
+    const decryptedItems = consultations.map(c => ({
+      ...c,
+      textDecrypted: decryptText(c.textEncrypted),
+      replyDecrypted: c.replyEncrypted ? (c.pinHash ? decryptReply(c.replyEncrypted, c.pinHash) : decryptText(c.replyEncrypted)) : undefined
+    }));
+    res.json({ status: "success", consultations: decryptedItems });
+  } catch (err: any) {
+    console.error("Error in /api/doctor/consultations:", err);
+    res.status(500).json({ status: "error", error: err.message || "Failed to fetch consultations" });
+  }
 });
 
 app.post("/api/doctor/reply", requireDoctorAuth, (req, res) => {
@@ -592,22 +610,28 @@ app.post("/api/doctor/reply", requireDoctorAuth, (req, res) => {
 
 // 5. Rooms messaging APIs
 app.get("/api/rooms/:roomId/messages", (req, res) => {
-  const { roomId } = req.params;
-  const lastId = parseInt(req.query.lastId as string || "0");
+  try {
+    const { roomId } = req.params;
+    const lastId = parseInt(req.query.lastId as string || "0");
 
-  const filtered = db.messages
-    .filter(m => m.roomId === roomId && m.id > lastId)
-    .map(m => ({
-      id: m.id,
-      roomId: m.roomId,
-      alias: m.alias,
-      message: m.isDeleted ? "[تم حذف هذه الرسالة بواسطة الأخصائي والمشرف لنشر الطاقة الإيجابية ومنع الإحباط]" : m.message,
-      timestamp: m.timestamp,
-      isDoctor: m.isDoctor,
-      isDeleted: m.isDeleted
-    }));
+    const messages = db.messages || [];
+    const filtered = messages
+      .filter(m => m.roomId === roomId && m.id > lastId)
+      .map(m => ({
+        id: m.id,
+        roomId: m.roomId,
+        alias: m.alias,
+        message: m.isDeleted ? "[تم حذف هذه الرسالة بواسطة الأخصائي والمشرف لنشر الطاقة الإيجابية ومنع الإحباط]" : m.message,
+        timestamp: m.timestamp,
+        isDoctor: m.isDoctor,
+        isDeleted: m.isDeleted
+      }));
 
-  res.json({ status: "success", messages: filtered });
+    res.json({ status: "success", messages: filtered });
+  } catch (err: any) {
+    console.error("Error in /api/rooms/:roomId/messages:", err);
+    res.status(500).json({ status: "error", error: err.message || "Failed to load room messages" });
+  }
 });
 
 app.post("/api/rooms/:roomId/messages", (req, res) => {
@@ -806,25 +830,31 @@ app.post("/api/tips-stories/:id/like", (req, res) => {
 
 // Get global aggregated diagnostics (Anonymously metrics)
 app.get("/api/doctor/statistics", requireDoctorAuth, (req, res) => {
-  const traumaCount = db.consultations.filter(c => c.category === "trauma").length;
-  const anxietyCount = db.consultations.filter(c => c.category === "anxiety").length;
-  const griefCount = db.consultations.filter(c => c.category === "grief").length;
-  const otherCount = db.consultations.filter(c => c.category === "other").length;
+  try {
+    const consultations = db.consultations || [];
+    const traumaCount = consultations.filter(c => c.category === "trauma").length;
+    const anxietyCount = consultations.filter(c => c.category === "anxiety").length;
+    const griefCount = consultations.filter(c => c.category === "grief").length;
+    const otherCount = consultations.filter(c => c.category === "other").length;
 
-  const total = db.consultations.length;
-  const answered = db.consultations.filter(c => c.status === "answered").length;
-  const pending = total - answered;
+    const total = consultations.length;
+    const answered = consultations.filter(c => c.status === "answered").length;
+    const pending = total - answered;
 
-  const highRisk = db.consultations.filter(c => c.riskLevel === "high").length;
+    const highRisk = consultations.filter(c => c.riskLevel === "high").length;
 
-  res.json({
-    status: "success",
-    categories: { trauma: traumaCount, anxiety: anxietyCount, grief: griefCount, other: otherCount },
-    total,
-    answered,
-    pending,
-    highRisk
-  });
+    res.json({
+      status: "success",
+      categories: { trauma: traumaCount, anxiety: anxietyCount, grief: griefCount, other: otherCount },
+      total,
+      answered,
+      pending,
+      highRisk
+    });
+  } catch (err: any) {
+    console.error("Error in /api/doctor/statistics:", err);
+    res.status(500).json({ status: "error", error: err.message || "Failed to load statistics" });
+  }
 });
 
 // Mount Vite middleware helper

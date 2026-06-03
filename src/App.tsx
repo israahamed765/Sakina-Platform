@@ -689,23 +689,51 @@ export default function App() {
     if (doctorLoggedIn && currentView === "doctor") {
       const refreshDoctorData = async () => {
         try {
-          // get consults
-          const r1 = await fetch(`/api/doctor/consultations?token=${doctorToken}`);
-          const d1 = await r1.json();
-          if (d1.status === "success") {
-            setDoctorConsults(d1.consultations);
+          // 1. get consults
+          try {
+            const r1 = await fetch(`/api/doctor/consultations?token=${doctorToken}`);
+            if (r1.ok && r1.headers.get("content-type")?.includes("application/json")) {
+              const d1 = await r1.json();
+              if (d1.status === "success") {
+                setDoctorConsults(d1.consultations);
+              }
+            } else {
+              console.warn("Consultations endpoint returned non-JSON response or failed:", r1.status);
+            }
+          } catch (err1) {
+            console.error("Failed to parse consultations JSON:", err1);
           }
-          // get statistics
-          const r2 = await fetch(`/api/doctor/statistics?token=${doctorToken}`);
-          const d2 = await r2.json();
-          if (d2.status === "success") {
-            setDoctorStats(d2);
+
+          // 2. get statistics
+          try {
+            const r2 = await fetch(`/api/doctor/statistics?token=${doctorToken}`);
+            if (r2.ok && r2.headers.get("content-type")?.includes("application/json")) {
+              const d2 = await r2.json();
+              if (d2.status === "success") {
+                setDoctorStats(d2);
+              }
+            } else {
+              console.warn("Statistics endpoint returned non-JSON response or failed:", r2.status);
+            }
+          } catch (err2) {
+            console.error("Failed to parse statistics JSON:", err2);
           }
-          // get room monitoring messages
-          const r3 = await fetch(`/api/rooms/${doctorSelectedMonitorRoom}/messages`);
-          const d3 = await r3.json();
-          if (d3.status === "success") {
-            setDoctorMonitorMessages(d3.messages);
+
+          // 3. get room monitoring messages
+          if (doctorSelectedMonitorRoom) {
+            try {
+              const r3 = await fetch(`/api/rooms/${doctorSelectedMonitorRoom}/messages`);
+              if (r3.ok && r3.headers.get("content-type")?.includes("application/json")) {
+                const d3 = await r3.json();
+                if (d3.status === "success") {
+                  setDoctorMonitorMessages(d3.messages);
+                }
+              } else {
+                console.warn("Monitor messages endpoint returned non-JSON response or failed:", r3.status);
+              }
+            } catch (err3) {
+              console.error("Failed to parse room messages JSON:", err3);
+            }
           }
         } catch (e) {
           console.error("Supervisor dashboards loading error:", e);
