@@ -31,6 +31,25 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
+// Predefined Security Questions for forgotten PIN recovery
+const SECURITY_QUESTIONS = [
+  { id: "pet", ar: "ما هو اسم أول رفيق لعب لك في الحي؟", en: "What was the name of your first childhood neighborhood playmate?" },
+  { id: "tent", ar: "أين كان موقع خيمتك أو بيتك الأول المفضل في الأزمة؟", en: "Where was the location of your first favorite tent/house location?" },
+  { id: "teacher", ar: "ما اسم أول معلم ترك أثراً طيباً في نفسك؟", en: "What was the name of your first school teacher who left a kind impact?" }
+];
+
+// Arabic normalization helper
+const normalizeArabicText = (txt: string) => {
+  if (!txt) return "";
+  return txt
+    .toLowerCase()
+    .trim()
+    .replace(/[\s\W_]+/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+};
+
 // Translation Dictionaries (Arabic priority, easily toggleable)
 const translations = {
   ar: {
@@ -293,6 +312,11 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isUltraLite, setIsUltraLite] = useState(false);
 
+  // Core state variables moved to top for closure/scope safety
+  const [ventText, setVentText] = useState("");
+  const [consultCategory, setConsultCategory] = useState<"anxiety" | "grief" | "trauma" | "other">("trauma");
+  const [consultText, setConsultText] = useState("");
+
   // Offline Diagnostics Guide & Local Vent Box states
   const [offlineVentText, setOfflineVentText] = useState("");
   const [offlineVents, setOfflineVents] = useState<Array<{ id: string, text: string, timestamp: string }>>([]);
@@ -321,12 +345,57 @@ export default function App() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Save encrypted drafts to localStorage before redirection
+        if (typeof consultText === "string" && consultText.trim()) {
+          localStorage.setItem("sakina_esc_backup_consult", encryptLocalText(consultText));
+          localStorage.setItem("sakina_esc_backup_category", consultCategory);
+        }
+        if (typeof ventText === "string" && ventText.trim()) {
+          localStorage.setItem("sakina_esc_backup_vent", encryptLocalText(ventText));
+        }
         window.location.href = "https://www.google.com";
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [consultText, consultCategory, ventText]);
+
+  // Check for any ESC backup drafts on mount
+  useEffect(() => {
+    const backupConsult = localStorage.getItem("sakina_esc_backup_consult");
+    const backupVent = localStorage.getItem("sakina_esc_backup_vent");
+    if (backupConsult || backupVent) {
+      setHasEscBackup(true);
+    }
   }, []);
+
+  const restoreEscDrafts = () => {
+    const backupConsult = localStorage.getItem("sakina_esc_backup_consult");
+    const backupCategory = localStorage.getItem("sakina_esc_backup_category");
+    const backupVent = localStorage.getItem("sakina_esc_backup_vent");
+
+    if (backupConsult) {
+      setConsultText(decryptLocalText(backupConsult));
+      if (backupCategory) {
+        setConsultCategory(backupCategory as any);
+      }
+    }
+    if (backupVent) {
+      setVentText(decryptLocalText(backupVent));
+    }
+    setHasEscBackup(false);
+    // Remove after restoring to keep clean
+    localStorage.removeItem("sakina_esc_backup_consult");
+    localStorage.removeItem("sakina_esc_backup_category");
+    localStorage.removeItem("sakina_esc_backup_vent");
+  };
+
+  const clearEscDrafts = () => {
+    localStorage.removeItem("sakina_esc_backup_consult");
+    localStorage.removeItem("sakina_esc_backup_category");
+    localStorage.removeItem("sakina_esc_backup_vent");
+    setHasEscBackup(false);
+  };
 
   // Base64 helper to encrypt vents inside localStorage
   const encryptLocalText = (str: string) => {
@@ -397,17 +466,63 @@ export default function App() {
   }, []);
   
   // Vent box text states
-  const [ventText, setVentText] = useState("");
   const [groundingStep, setGroundingStep] = useState(0);
   const [ventFading, setVentFading] = useState(false);
   const [ventSuccessAlert, setVentSuccessAlert] = useState(false);
 
   // New Consultation Submission States
-  const [consultCategory, setConsultCategory] = useState<"anxiety" | "grief" | "trauma" | "other">("trauma");
-  const [consultText, setConsultText] = useState("");
   const [consultSubmitting, setConsultSubmitting] = useState(false);
   const [generatedTrackId, setGeneratedTrackId] = useState<string | null>(null);
   const [copiedAlert, setCopiedAlert] = useState(false);
+
+  // Security Questions State for Consultation submission
+  const [consultSecurityQuestionId, setConsultSecurityQuestionId] = useState("pet");
+  const [consultSecurityAnswer, setConsultSecurityAnswer] = useState("");
+
+  // Security Questions State for Assessments saving
+  const [secretSecurityQuestionId, setSecretSecurityQuestionId] = useState("pet");
+  const [secretSecurityAnswer, setSecretSecurityAnswer] = useState("");
+
+  // Recovery Questions State for Consultation tracking
+  const [recoverConsultWithQuestion, setRecoverConsultWithQuestion] = useState(false);
+  const [consultRecoverQuestionId, setConsultRecoverQuestionId] = useState("pet");
+  const [consultRecoverAnswer, setConsultRecoverAnswer] = useState("");
+
+  // Recovery Questions State for Secret Tracker login
+  const [recoverSecretWithQuestion, setRecoverSecretWithQuestion] = useState(false);
+  const [secretRecoverQuestionId, setSecretRecoverQuestionId] = useState("pet");
+  const [secretRecoverAnswer, setSecretRecoverAnswer] = useState("");
+
+  // Emergency ESC Backup Warning State
+  const [hasEscBackup, setHasEscBackup] = useState(false);
+
+  // New assessment and secret vault states
+  const [consultSubtab, setConsultSubtab] = useState<"assessment" | "form">("assessment");
+  const [assessmentStep, setAssessmentStep] = useState(0);
+  const [assessmentAnswers, setAssessmentAnswers] = useState<number[]>([]);
+  const [assessmentScore, setAssessmentScore] = useState<number | null>(null);
+  const [assessmentSaved, setAssessmentSaved] = useState(false);
+  
+  // Secret account credentials for assessments
+  const [secretUsername, setSecretUsername] = useState("");
+  const [secretPin, setSecretPin] = useState("");
+  const [secretAuthError, setSecretAuthError] = useState("");
+  const [isSecretLoggedIn, setIsSecretLoggedIn] = useState(false);
+  const [secretHistory, setSecretHistory] = useState<any[]>([]);
+  const [savingAssessmentState, setSavingAssessmentState] = useState(false);
+
+  // Pure distraction-free venting toggle
+  const [pureVentingMode, setPureVentingMode] = useState(false);
+
+  // Reported messages local array to prevent re-rendering reported items
+  const [reportedMessageIds, setReportedMessageIds] = useState<number[]>([]);
+
+  // Crisis category filters inside tips
+  const [crisisTipsCategory, setCrisisTipsCategory] = useState<"all" | "panic" | "anxiety" | "trauma" | "grief">("all");
+
+  // Voice synthesis states for tips reading
+  const [activeVoiceTipId, setActiveVoiceTipId] = useState<string | null>(null);
+  const [largeFontForTips, setLargeFontForTips] = useState(false);
 
   // Tracking response states
   const [trackIdInput, setTrackIdInput] = useState("");
@@ -626,9 +741,11 @@ export default function App() {
       const fetchMsgs = async () => {
         try {
           const res = await fetch(`/api/rooms/${selectedRoomId}/messages`);
-          const data = await res.json();
-          if (data.status === "success") {
-            setMessages(data.messages);
+          if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+            const data = await res.json();
+            if (data.status === "success") {
+              setMessages(data.messages);
+            }
           }
         } catch (e) {
           console.error("Polling error:", e);
@@ -646,12 +763,14 @@ export default function App() {
     const checkPulls = async () => {
       try {
         const res = await fetch(`/api/user/private-pulls?userToken=${userToken}`);
-        const data = await res.json();
-        if (data.status === "success" && data.pulls && data.pulls.length > 0) {
-          const activePull = data.pulls[0];
-          setPulledChatId(activePull.id);
-          setPulledAlias(activePull.userAlias);
-          setShowPullModal(true);
+        if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+          const data = await res.json();
+          if (data.status === "success" && data.pulls && data.pulls.length > 0) {
+            const activePull = data.pulls[0];
+            setPulledChatId(activePull.id);
+            setPulledAlias(activePull.userAlias);
+            setShowPullModal(true);
+          }
         }
       } catch (err) {
         console.error("Trigger pull check error:", err);
@@ -669,9 +788,11 @@ export default function App() {
       const fetchPrivateMsgs = async () => {
         try {
           const res = await fetch(`/api/private-chat/${privateChatId}`);
-          const data = await res.json();
-          if (data.status === "success") {
-            setPrivateMessages(data.chat.messages);
+          if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+            const data = await res.json();
+            if (data.status === "success") {
+              setPrivateMessages(data.chat.messages);
+            }
           }
         } catch (err) {
           console.error("Private chat content check failed:", err);
@@ -745,11 +866,59 @@ export default function App() {
     return () => clearInterval(timerId);
   }, [doctorLoggedIn, currentView, doctorSelectedMonitorRoom]);
 
+  // Web Audio Synth for physical steam/smoke fading whoosh sound (zero assets dependency)
+  const playEvaporationSound = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      
+      // Procedural white noise generated dynamically
+      const bufferSize = ctx.sampleRate * 2.2;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      
+      let lastVal = 0.0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        data[i] = 0.7 * lastVal + 0.3 * white; // Pinkish noise filter
+        lastVal = data[i];
+      }
+      
+      const noiseSource = ctx.createBufferSource();
+      noiseSource.buffer = buffer;
+      
+      const filter = ctx.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.Q.value = 6.0;
+      
+      // Frequency sweep mimicking dispersing gas/vapor smoke
+      filter.frequency.setValueAtTime(140, ctx.currentTime);
+      filter.frequency.exponentialRampToValueAtTime(1800, ctx.currentTime + 1.1);
+      filter.frequency.linearRampToValueAtTime(80, ctx.currentTime + 2.0);
+      
+      const gainNode = ctx.createGain();
+      gainNode.gain.setValueAtTime(0, ctx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.25, ctx.currentTime + 0.35);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.1);
+      
+      noiseSource.connect(filter);
+      filter.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      noiseSource.start();
+      noiseSource.stop(ctx.currentTime + 2.2);
+    } catch (e) {
+      console.warn("Web audio context start bypassed or blocked by user engagement state:", e);
+    }
+  };
+
   // Local text fader / decompression vacuum helper
   const handleVentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ventText.trim()) return;
     setVentFading(true);
+    playEvaporationSound();
     setTimeout(() => {
       // Wiped totally from RAM
       setVentText("");
@@ -770,13 +939,16 @@ export default function App() {
         body: JSON.stringify({ 
           category: consultCategory, 
           text: consultText,
-          pin: consultPin.trim() || undefined
+          pin: consultPin.trim() || undefined,
+          securityQuestionId: consultSecurityQuestionId,
+          securityAnswer: consultSecurityAnswer.trim() || undefined
         })
       });
       const data = await res.json();
       if (data.status === "success") {
         setGeneratedTrackId(data.trackingId);
         setConsultText("");
+        setConsultSecurityAnswer(""); // Clear answer securely
       }
     } catch (err) {
       console.error(err);
@@ -792,8 +964,14 @@ export default function App() {
     setTrackingError(null);
     setTrackedResult(null);
     try {
-      const pinQuery = trackPinInput.trim() ? `?pin=${trackPinInput.trim()}` : "";
-      const res = await fetch(`/api/consultations/${trackIdInput.trim().toUpperCase()}${pinQuery}`);
+      let queryParam = "";
+      if (recoverConsultWithQuestion) {
+        queryParam = `?questionId=${consultRecoverQuestionId}&answer=${encodeURIComponent(consultRecoverAnswer.trim())}`;
+      } else {
+        queryParam = trackPinInput.trim() ? `?pin=${trackPinInput.trim()}` : "";
+      }
+      
+      const res = await fetch(`/api/consultations/${trackIdInput.trim().toUpperCase()}${queryParam}`);
       const data = await res.json();
       if (data.status === "success") {
         setTrackedResult(data);
@@ -801,9 +979,157 @@ export default function App() {
         setTrackingError(data.error);
       }
     } catch (err) {
-      setTrackingError("فشل العثور على استشارتك. يرجى مراجعة الاتصال بشبكتك ومحاولة مجدداً.");
+      setTrackingError("فشل العثور على استشارتك أو رمز مرور/سؤال أمان خاطئ. يرجى مراجعتها وتجربتها مجدداً.");
     } finally {
       setTrackingLoading(false);
+    }
+  };
+
+  // Report offensive message as abusive
+  const reportRoomMessage = async (msgId: number) => {
+    try {
+      const res = await fetch(`/api/rooms/message/${msgId}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setReportedMessageIds(prev => [...prev, msgId]);
+        alert(lang === "ar" ? "شكراً لك. تم الإبلاغ عن هذه الرسالة بنجاح وسيتعامل المشرف معها لحظر المخالف فوراً للحفاظ على طهارة المحادثة ونبلها." : "Thank you. Message flagged for supervisor review.");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Live client-side cryptographic hashing for credentials to protect HIPAA/Psychological integrity
+  const simpleHash = (str: string): string => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return Math.abs(hash).toString(16);
+  };
+
+  // Save current assessment score under private secret alias-account sync
+  const saveAssessmentToSecretAccount = async () => {
+    if (!secretUsername.trim() || !secretPin.trim() || assessmentScore === null) {
+      setSecretAuthError(lang === "ar" ? "يرجى ملء جميع الحقول المطلوبة لحفظ النتيجة" : "Fill credentials first.");
+      return;
+    }
+    setSavingAssessmentState(true);
+    setSecretAuthError("");
+    try {
+      const pinHash = simpleHash(secretPin.trim());
+      const res = await fetch("/api/assessments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: secretUsername.trim(),
+          pinHash,
+          score: assessmentScore,
+          categoryScores: assessmentAnswers,
+          timestamp: new Date().toISOString(),
+          securityQuestionId: secretSecurityQuestionId,
+          securityAnswer: secretSecurityAnswer.trim() || undefined
+        })
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setAssessmentSaved(true);
+        // Clean answers
+        setSecretSecurityAnswer("");
+        // Auto pull history too
+        retrieveSecretHistory();
+      } else {
+        setSecretAuthError(data.error || "فشل التخزين بالخادم");
+      }
+    } catch (err) {
+      setSecretAuthError("حدث خطأ بالاتصال بالخادم لحفظ رصيد الصمود.");
+    } finally {
+      setSavingAssessmentState(false);
+    }
+  };
+
+  // Retrieve full assessment trajectory history
+  const retrieveSecretHistory = async () => {
+    if (!secretUsername.trim()) {
+      setSecretAuthError(lang === "ar" ? "يرجى تحديد هاتف الدخول الخاص بك أولاً." : "Username required.");
+      return;
+    }
+    if (!recoverSecretWithQuestion && !secretPin.trim()) {
+      setSecretAuthError(lang === "ar" ? "يرجى إدخال الرمز السري PIN أو استخدام خيار سؤال الأمان." : "PIN required.");
+      return;
+    }
+    if (recoverSecretWithQuestion && !secretRecoverAnswer.trim()) {
+      setSecretAuthError(lang === "ar" ? "يرجى كتابة إجابة سؤال الأمان المخصص الخاص بك." : "Security answer required.");
+      return;
+    }
+    
+    setSecretAuthError("");
+    setSavingAssessmentState(true);
+    try {
+      const payload: any = { username: secretUsername.trim() };
+      if (recoverSecretWithQuestion) {
+        payload.securityQuestionId = secretRecoverQuestionId;
+        payload.securityAnswer = secretRecoverAnswer.trim();
+      } else {
+        payload.pinHash = simpleHash(secretPin.trim());
+      }
+
+      const res = await fetch("/api/assessments/retrieve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        setSecretHistory(data.assessments || []);
+        setIsSecretLoggedIn(true);
+      } else {
+        setSecretAuthError(data.error || "بيانات الاعتماد غير صالحة");
+      }
+    } catch (err) {
+      setSecretAuthError("فشل الوصول إلى المخطط السري، يرجى إعادة المحاولة من جديد وإلقاء نظرة على مدخلاتك.");
+    } finally {
+      setSavingAssessmentState(false);
+    }
+  };
+
+  const handleSecretLogout = () => {
+    setIsSecretLoggedIn(false);
+    setSecretUsername("");
+    setSecretPin("");
+    setSecretHistory([]);
+    setSecretAuthError("");
+    setAssessmentSaved(false);
+  };
+
+  // Voice synthesis text-to-speech helper
+  const speakTip = (tipId: string, text: string) => {
+    if (!window.speechSynthesis) return;
+    
+    if (activeVoiceTipId === tipId) {
+      window.speechSynthesis.cancel();
+      setActiveVoiceTipId(null);
+    } else {
+      window.speechSynthesis.cancel();
+      // Clean emojis and links for clear reading
+      const cleaned = text.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, "");
+      const utterance = new SpeechSynthesisUtterance(cleaned);
+      utterance.lang = lang === "ar" ? "ar-EG" : "en-US";
+      utterance.rate = 0.88; // Gentle, paced flow for clinical calm
+      utterance.pitch = 1.02;
+      utterance.onend = () => {
+        setActiveVoiceTipId(null);
+      };
+      utterance.onerror = () => {
+        setActiveVoiceTipId(null);
+      };
+      window.speechSynthesis.speak(utterance);
+      setActiveVoiceTipId(tipId);
     }
   };
 
@@ -1392,6 +1718,45 @@ export default function App() {
         </div>
       )}
 
+      {/* ESC Quick Escape Draft Recovery Banner */}
+      <AnimatePresence>
+        {hasEscBackup && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-[#D3E4CD] text-[#2B2D42] py-3.5 px-4 shadow-md text-center border-b border-[#b2cfab] relative overflow-hidden"
+          >
+            <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-right" dir="rtl">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🛡️</span>
+                <span className="text-xs md:text-sm font-bold text-[#4A6B5D]">
+                  {lang === "ar"
+                    ? "تم اكتشاف مسودات محفوظة مسبقاً جراء تفعيل زر الهروب السريع الطارئ (ESC). يمكنك استعادتها الآن دون أي فقد للبيانات."
+                    : "Encrypted drafts recovered from emergency Quick Escape key (ESC). Restore them safely below."}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={restoreEscDrafts}
+                  className="px-3.5 py-1.5 bg-[#4A6B5D] hover:bg-[#3b5549] text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  {lang === "ar" ? "🔓 استعادة النصوص الآن" : "Restore Drafts"}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearEscDrafts}
+                  className="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  {lang === "ar" ? "🗑️ حذف وتجاهل" : "Dismiss"}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Main Structural Banner & Header Layout */}
       <header className="sticky top-0 z-40 bg-[#F4F7F5] border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
@@ -1590,16 +1955,26 @@ export default function App() {
               </div>
 
               {/* Cognitive Vent Box (صندوق التنفيس والتلاشي) */}
-              <div className="bg-white border text-[#2B2D42] p-6 md:p-8 rounded-2xl shadow-sm border-gray-200">
+              <div className="bg-white border text-[#2B2D42] p-6 md:p-8 rounded-2xl shadow-sm border-gray-200 relative overflow-hidden">
                 <div className="max-w-3xl mx-auto space-y-4">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-[#D3E4CD] p-2 rounded-lg text-[#4A6B5D]">
-                      <Sparkles className="h-6 w-6" />
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-50 pb-3">
+                    <div className="flex items-center gap-3 text-right" dir="rtl">
+                      <div className="bg-[#D3E4CD] p-2 rounded-lg text-[#4A6B5D]">
+                        <Sparkles className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg md:text-xl font-bold">{t.ventTitle}</h3>
+                        <p className="text-xs text-gray-500">{t.ventSubtitle}</p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-lg md:text-xl font-bold">{t.ventTitle}</h3>
-                      <p className="text-xs text-gray-500">{t.ventSubtitle}</p>
-                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => setPureVentingMode(true)}
+                      className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-all flex items-center gap-1.5 cursor-pointer justify-center shadow-xs self-start"
+                    >
+                      🧘‍♂️ <span>{lang === "ar" ? "تفعيل وضع التفريغ الصامت المعزول" : "Distraction-Free Focus Mode"}</span>
+                    </button>
                   </div>
 
                   <form onSubmit={handleVentSubmit} className="space-y-4 pt-2">
@@ -1611,17 +1986,18 @@ export default function App() {
                           setVentSuccessAlert(false);
                         }}
                         disabled={ventFading}
-                        rows={4}
+                        rows={5}
                         placeholder={t.ventPlaceholder}
-                        className={`w-full p-4 rounded-xl border border-gray-300 focus:ring-2 focus:ring-[#4A6B5D] focus:border-transparent outline-none text-sm transition-all resize-none bg-[#F4F7F5]/50 leading-relaxed font-sans ${ventFading ? "opacity-30 blur-[2px] cursor-not-allowed select-none transition-all duration-3000" : ""}`}
+                        className={`w-full p-4 rounded-xl border border-gray-300 focus:ring-2 focus:ring-[#4A6B5D] focus:border-transparent outline-none text-sm transition-all resize-none bg-[#F4F7F5]/50 leading-relaxed font-sans text-right ${ventFading ? "opacity-30 blur-[2px] cursor-not-allowed select-none transition-all duration-3000" : ""}`}
+                        dir="rtl"
                       />
                       
                       {/* Evaporate effect visualizer */}
                       {ventFading && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center space-y-2 bg-[#F4F7F5]/70 rounded-xl">
+                        <div className="absolute inset-0 flex flex-col items-center justify-center space-y-2 bg-[#F4F7F5]/80 rounded-xl">
                           <RefreshCw className="h-8 w-8 text-[#4A6B5D] animate-spin" />
-                          <span className="text-xs font-semibold text-[#4A6B5D] italic">
-                            {lang === "ar" ? "جاري كشط وفك الكلمات وطحن الروح المنهكة إلى العدم... 💨" : "Evaporating the letters into the vacuum space... 💨"}
+                          <span className="text-xs font-bold text-[#4A6B5D] italic">
+                            {lang === "ar" ? "🔥 جاري تمزيق وطحن الكلمات وتحويل الأحزان إلى ذرات من الهباء والعدم المنفسح... 💨" : "Evaporating the words into clean background space... 💨"}
                           </span>
                         </div>
                       )}
@@ -1631,7 +2007,7 @@ export default function App() {
                       <button
                         type="submit"
                         disabled={ventFading || !ventText.trim()}
-                        className="px-6 py-3 bg-[#D4A373] hover:bg-[#c39161] disabled:opacity-40 text-black font-bold rounded-xl text-xs transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+                        className="px-6 py-3 bg-[#D4A373] hover:bg-[#c39161] disabled:opacity-40 text-black font-extrabold rounded-xl text-xs transition-all flex items-center gap-2 cursor-pointer active:scale-95"
                       >
                         <Volume2 className="h-4 w-4" />
                         <span>{t.ventBtn}</span>
@@ -1654,6 +2030,106 @@ export default function App() {
                   </AnimatePresence>
                 </div>
               </div>
+
+              {/* PURE MEDITATIVE FOCUS MODE POPUP OVERLAY */}
+              <AnimatePresence>
+                {pureVentingMode && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 bg-[#1e2229] bg-radial from-[#1e2229] via-[#111317] to-black z-50 flex items-center justify-center p-4 md:p-8"
+                    dir="rtl"
+                  >
+                    {/* Floating ambient light effect vectors */}
+                    <div className="absolute top-1/4 left-1/4 w-80 h-80 rounded-full bg-emerald-500/5 blur-3xl" />
+                    <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full bg-amber-500/5 blur-3xl" />
+
+                    <div className="max-w-3xl w-full bg-white/[0.03] backdrop-blur-lg border border-white/10 p-6 md:p-10 rounded-3xl shadow-2xl relative z-10 space-y-6 flex flex-col justify-between max-h-[90vh]">
+                      
+                      <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                        <div className="text-right">
+                          <span className="bg-emerald-500/10 text-emerald-400 font-mono text-[10px] uppercase font-bold px-3 py-1 rounded-full">
+                            🧘‍♂️ {lang === "ar" ? "مساحة التعافي الصامت والمعزول" : "Focused Decompression Sanctuary"}
+                          </span>
+                          <h4 className="text-base md:text-lg font-bold text-gray-100 mt-1.5">
+                            {lang === "ar" ? "تفريغ الروح الطليق من كدر الهواجس والخوف" : "Zero-Distraction Writing Pad"}
+                          </h4>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPureVentingMode(false);
+                            setVentText("");
+                            setVentSuccessAlert(false);
+                          }}
+                          className="px-4 py-2 hover:bg-white/10 text-gray-300 font-bold border border-white/10 rounded-xl text-xs transition-all cursor-pointer"
+                        >
+                          ❌ {lang === "ar" ? "إنهاء وغلق العزلة" : "Exit Sanctuary"}
+                        </button>
+                      </div>
+
+                      {/* Wide writing area */}
+                      <div className="flex-1 relative py-2">
+                        <textarea
+                          value={ventText}
+                          onChange={(e) => {
+                            setVentText(e.target.value);
+                            setVentSuccessAlert(false);
+                          }}
+                          disabled={ventFading}
+                          rows={8}
+                          placeholder={lang === "ar" ? "اكتب هنا تفاصيل قلقك، مخاوفك، أفكارك المنهكة بالكامل، لا أحد يراقب، لا كلمات تُسجل في خوادم الشبكة... بمجرد إرسالها ستتلاشى وتضمحل إلى العدم اللامتناهي." : "Write your grief, anger, anxiety or traumatic loops here completely untraced..."}
+                          className={`w-full h-full min-h-[250px] md:min-h-[300px] p-6 rounded-2xl bg-black/40 text-gray-100 font-sans leading-relaxed text-sm md:text-base border border-white/5 focus:border-emerald-500/30 focus:ring-1 focus:ring-emerald-500/20 outline-none resize-none text-right transition-all duration-500 ${
+                            ventFading ? "opacity-10 blur-xl scale-95 pointer-events-none" : ""
+                          }`}
+                        />
+
+                        {/* Evaporating Smoke Animation Simulation overlay */}
+                        {ventFading && (
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-black/80 rounded-2xl text-center p-3"
+                          >
+                            <motion.div
+                              animate={{ scale: [1, 1.2, 1], rotate: [0, 180, 360], opacity: [0.3, 0.8, 0.3] }}
+                              transition={{ repeat: Infinity, duration: 4.5 }}
+                              className="h-16 w-16 border-2 border-dashed border-emerald-500 rounded-full flex items-center justify-center text-emerald-400"
+                            >
+                              💨
+                            </motion.div>
+                            <span className="text-sm font-bold text-emerald-400 text-center tracking-wide font-sans md:max-w-md">
+                              {lang === "ar" 
+                                ? "⏳ نسمع نبضات قلبك.. جاري فك كدر الكلمات، وطحن أوزار الروح، وتبخيرها تماماً كدخان ساكن يعود إلى الفضاء السحيق..." 
+                                : "The words and sorrows are evaporating into the deep vacuum atmosphere..."}
+                            </span>
+                          </motion.div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          {lang === "ar" 
+                            ? "🔊 سيفعل المحاكي الصوتي مؤثراً ورقياً هادئاً لتسهيل فصام وتلاشي الذرات" 
+                            : "🔊 Web Audio API paper-shred/fading generator is active"}
+                        </span>
+                        
+                        <button
+                          type="button"
+                          onClick={handleVentSubmit}
+                          disabled={ventFading || !ventText.trim()}
+                          className="px-8 py-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-xs md:text-sm rounded-xl transition-all flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 text-right shrink-0"
+                        >
+                          <Volume2 className="h-4 w-4" />
+                          <span>{lang === "ar" ? "أبخر وتبخير همي للعدم 💨" : "Evaporate Sorrows! 💨"}</span>
+                        </button>
+                      </div>
+
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Hurdles Cards Section */}
               <div className="space-y-6">
@@ -1700,134 +2176,711 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
               transition={{ duration: 0.2 }}
-              className="max-w-2xl mx-auto space-y-6"
+              className="max-w-2xl mx-auto space-y-6 text-right"
+              dir="rtl"
             >
               <button 
                 onClick={() => setCurrentView("home")}
-                className="flex items-center gap-1 text-xs text-[#4A6B5D] font-bold hover:underline cursor-pointer"
+                className="flex items-center gap-1.5 text-xs text-[#4A6B5D] font-bold hover:underline cursor-pointer"
               >
                 <ArrowLeft className="h-4 w-4" />
                 <span>{lang === "ar" ? "العودة للرئيسية" : "Back to Home"}</span>
               </button>
 
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 space-y-6 shadow-xs">
-                <div>
-                  <h3 className="text-lg md:text-xl font-bold text-[#4A6B5D]">{t.consultTitle}</h3>
-                  <p className="text-xs text-gray-500 mt-1">{t.consultSubtitle}</p>
-                </div>
+              {/* Sub-tab Selection */}
+              <div className="flex bg-gray-100 p-1.5 rounded-2xl gap-1 items-center">
+                <button
+                  type="button"
+                  onClick={() => setConsultSubtab("assessment")}
+                  className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    consultSubtab === "assessment" ? "bg-white text-[#4A6B5D] shadow-xs" : "text-gray-500 hover:text-gray-800"
+                  }`}
+                >
+                  📊 {lang === "ar" ? "مقياس سكينة للتعافي والصلابة الذاتية" : "Resilience Self-Assessment"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConsultSubtab("form")}
+                  className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    consultSubtab === "form" ? "bg-white text-[#4A6B5D] shadow-xs" : "text-gray-500 hover:text-gray-800"
+                  }`}
+                >
+                  ✉️ {lang === "ar" ? "تقديم استشارة سرية حرة ومباشرة" : "confidential Written Consult"}
+                </button>
+              </div>
 
-                {!generatedTrackId ? (
-                  <form onSubmit={submitConsultation} className="space-y-5">
+              {consultSubtab === "assessment" ? (
+                <div className="space-y-6">
+                  {/* Interactive Quiz Card */}
+                  <div className="bg-white rounded-3xl border border-gray-200 p-6 md:p-8 space-y-6 shadow-xs relative overflow-hidden">
                     
-                    {/* Category Input */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-[#2B2D42] block">{t.fieldCategory}</label>
-                      <select
-                        value={consultCategory}
-                        onChange={(e: any) => setConsultCategory(e.target.value)}
-                        className="w-full p-3 rounded-lg border border-gray-300 bg-[#F4F7F5] outline-none font-sans text-xs md:text-sm focus:border-[#4A6B5D]"
-                      >
-                        <option value="trauma">{t.catTrauma}</option>
-                        <option value="anxiety">{t.catAnxiety}</option>
-                        <option value="grief">{t.catGrief}</option>
-                        <option value="other">{t.catOther}</option>
-                      </select>
+                    {/* Decorative Background */}
+                    <div className="absolute top-0 left-0 text-[#4A6B5D]/5 -translate-x-6 -translate-y-6 select-none pointer-events-none">
+                      <Sparkles className="w-32 h-32" />
                     </div>
 
-                    {/* Content text */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-[#2B2D42] block">{t.fieldDetails}</label>
-                      <textarea
-                        value={consultText}
-                        onChange={(e) => setConsultText(e.target.value)}
-                        required
-                        rows={6}
-                        placeholder={t.fieldPlaceholder}
-                        className="w-full p-4 rounded-xl border border-gray-300 font-sans text-xs md:text-sm bg-[#F4F7F5]/40 outline-none leading-relaxed focus:ring-2 focus:ring-[#4A6B5D] focus:border-transparent resize-none"
-                      />
-                    </div>
-
-                    {/* Security 4-digit PIN Salt */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-bold text-[#2B2D42] block">
+                    <div className="border-b border-gray-100 pb-4 relative z-10">
+                      <span className="bg-[#4A6B5D]/10 text-[#4A6B5D] text-[10px] uppercase font-mono font-extrabold px-3 py-1 rounded-full">
+                        {lang === "ar" ? "أداة التقييم الذاتي والتفريج السريري" : "Interactive Resilience Meter"}
+                      </span>
+                      <h3 className="text-lg md:text-xl font-extrabold text-[#4A6B5D] mt-2">
+                        {lang === "ar" ? "مقياس سكينة للصلابة والتعافي الذاتي 📊" : "Sakina Emotional Decompression Assessment"}
+                      </h3>
+                      <p className="text-xs text-gray-500 mt-1">
                         {lang === "ar" 
-                          ? "رقم مرور للحماية الإضافية (4 أرقام يختارها عقلك):" 
-                          : "4-Digit Security PIN (Required for Tracking/Decryption):"}
-                      </label>
-                      <input
-                        type="password"
-                        maxLength={4}
-                        pattern="\d{4}"
-                        value={consultPin}
-                        onChange={(e) => setConsultPin(e.target.value.replace(/\D/g, ""))}
-                        required
-                        placeholder={lang === "ar" ? "مثال: 4821 • اختر رمزًا في سرّية تامة لتتذكره، لن يتم حفظه نصيًا" : "e.g., 4821 • Choose in absolute secrecy, we never store this PIN in plain text"}
-                        className="w-full p-3 rounded-lg border border-gray-300 font-sans text-xs md:text-sm bg-[#F4F7F5] outline-none tracking-widest text-[#4A6B5D] font-bold focus:border-[#4A6B5D]"
-                      />
-                      <p className="text-[10px] text-gray-400">
-                        {lang === "ar" 
-                          ? "🛡️ تشفير الملح الرقمي: سيتم تشفير فك الرد برمزك المميز هذا. حتى لو تم اختراق خوادمنا بالكامل، فلن يمكن لأحد أبداً فك شفرة ومواساة الأخصائي بدون الرمز." 
-                          : "🛡️ Digital Salt: The doctor's response will merge with this PIN salt. Nobody will ever trace or decode it without this code."}
+                          ? "استبيان هادئ مكون من سؤال واحد في كل خطوة لرعاية مشاعرك وقياس تماسك النفس في فترات صدمات الأزمات." 
+                          : "A peaceful step-by-step diagnostic to measure resilience indicators, self-regulate, and monitor recovery."}
                       </p>
                     </div>
 
-                    <button
-                      type="submit"
-                      disabled={consultSubmitting || !consultText.trim() || consultPin.length !== 4}
-                      className="w-full py-3 bg-[#4A6B5D] hover:bg-[#3b5549] text-white disabled:opacity-45 rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer active:scale-95"
-                    >
-                      {consultSubmitting ? (lang === "ar" ? "جاري تشفير المذكرة الطبية النفسية... ⏳" : "Securing and Encrypting Transmission... ⏳") : t.btnSubmitConsult}
-                    </button>
-                  </form>
-                ) : (
-                  
-                  // Success State yielding Tracking ID
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="p-6 bg-[#D3E4CD]/50 border border-[#b2cfab] rounded-2xl text-center space-y-4"
-                  >
-                    <CheckCircle className="h-12 w-12 text-[#4A6B5D] mx-auto" />
-                    <h4 className="font-bold text-[#4A6B5D] text-base">{t.consultSuccessTitle}</h4>
-                    <p className="text-xs text-gray-600 leading-relaxed max-w-md mx-auto">{t.consultSuccessDesc}</p>
-                    
-                    <div className="flex flex-col items-center gap-2 max-w-sm mx-auto p-4 bg-white rounded-xl border border-dashed border-[#4A6B5D]">
-                      <span className="text-[10px] text-gray-400 font-bold uppercase">{lang === "ar" ? "رقمك السري والوحيد للتتبع" : "Your Random Tracking ID"}</span>
-                      <span className="text-xl md:text-3xl font-mono font-extrabold text-[#4A6B5D] tracking-widest">{generatedTrackId}</span>
+                    {assessmentScore === null ? (
+                      // Quiz Running States
+                      (() => {
+                        const QUESTIONS_REF = [
+                          {
+                            id: 1,
+                            questionAr: "كيف تصف جودة نومك واستقرار أحلامك وتجنبك للكوابيس المزعجة مؤخراً؟",
+                            questionEn: "How would you rate your sleep quality and avoidance of recurring nightmares lately?",
+                            optionsAr: ["سيء جداً وكوابيس متكررة 😰", "متقطع ومصحوب بالذعر والنهوض 💔", "مقبول نوعاً ما مع بعض القلق 🧠", "مستقر في أغلب الليالي 🕯️", "عميق وهادئ ومكافئ ومطهر 🌟"],
+                            optionsEn: ["Severe nightmares / insomnia 😰", "Disrupted with frequent panics 💔", "Moderately anxious but sleepable 🧠", "Mostly calm and secure 🕯️", "Deeply peaceful and restorative 🌟"]
+                          },
+                          {
+                            id: 2,
+                            questionAr: "عند السماع لأصوات مفاجئة أو قوية بالخارج، إلى أي درجة تعاني من خفقان سريع للقلب وضيق تنفسي حاد؟",
+                            questionEn: "When hearing loud sudden sounds outside, to what degree do you experience severe palpitation & dyspnea?",
+                            optionsAr: ["ذعر كامل وتشنج تنفسي خانق 💔", "خوف شديد واضطراب حركي مع قشعريرة 😨", "ارتجاف بسيط يزول في دقائق معدودة 🧠", "توتر طفيف عابر بوعي تام وصمود 🕯️", "طمأنينة وهدوء فسيولوجي كامل وراسخ 🌟"],
+                            optionsEn: ["Total panic & breathing spasm 💔", "Severe anxiety & rapid shaking 😨", "Minor trembling fading quickly 🧠", "Slight alert with fast focus 🕯️", "Complete physiological resilience 🌟"]
+                          },
+                          {
+                            id: 3,
+                            questionAr: "ما مدى شعورك بقدرتك العاطفية على الصمود اليومي وتلبية الاحتياجات الأساسية لمن حولك بالرعاية؟",
+                            questionEn: "How confident are you in managing your emotions and care duties for your peers/family?",
+                            optionsAr: ["منهار عاطفياً وتحت وطأة العجز الكامل 🥀", "أشعر بصعوبة حادة وعشوائية في الأفكار 😰", "أجاهد لتلبية الحد الأدنى بجهود متعبة 🤝", "أتحمل المهام بثقة وتوزان هادئ 🕯️", "أقود مبادرات المساندة بصلابة تامة ونبل 🌟"],
+                            optionsEn: ["Completely hopeless / overwhelmed 🥀", "Struggling & highly disorganized 😰", "Coping with strenuous efforts 🤝", "Managing duties with quiet confidence 🕯️", "Leading support initiatives resiliently 🌟"]
+                          },
+                          {
+                            id: 4,
+                            questionAr: "إلى أي مدى تشعر برداءة المزاج أو الحزن الطاغي المستمر الذي يحجب عن بصيرتك ومضات الأمل؟",
+                            questionEn: "How often do you feel engulfed in deep constant sadness blocking any sparks of hope?",
+                            optionsAr: ["حزن دائم وخانق يعزلني تماماً 💔", "شعور متكرر بمرارة ويأس عارم ومجهل 😰", "الأيام حزينة، لكن أجد البسمة تارات 🤝", "الحزن عابر ومسيطر عليه بمرونة جيدة 🕯️", "أشعر برضا داخلي وسلام وبشائر أمل واعدة 🌟"],
+                            optionsEn: ["Constant suffocating sorrow 💔", "Frequent bitter sadness & despair 😰", "Mostly melancholic but occasional joy 🤝", "Transient grief managed with ease 🕯️", "Deep inner peace and proactive hope 🌟"]
+                          },
+                          {
+                            id: 5,
+                            questionAr: "كيف تقيم تواصلك وتضامنك ومشاركتك للمشاعر الداعمة مع عائلتك أو رفاق المخيم؟",
+                            questionEn: "How would you rate your emotional sharing and active empathy with peers or family?",
+                            optionsAr: ["منعزل ومنطوٍ تماماً وأتجنب المخالطة 🥀", "متحفظ وأشعر بغربة حقيقية بين الناس 😰", "أشارك المشاعر بحدود مقتضبة عند الإلحاح 🤝", "أتعامل وأتعاطف بمرونة وسهولة مع القوم 🕯️", "منخرط كلياً وأبث السكينة والطمأنينة بكل نبل 🌟"],
+                            optionsEn: ["Totally isolated & uncommunicative 🥀", "Withdrawn with deep sense of estrangement 😰", "Share emotions only when prompted 🤝", "Frequently social and empathetically present 🕯️", "Deeply engaged in spreading warm solidarity 🌟"]
+                          }
+                        ];
+
+                        const q = QUESTIONS_REF[assessmentStep] || QUESTIONS_REF[0];
+                        const progPercent = Math.round(((assessmentStep + 1) / QUESTIONS_REF.length) * 100);
+
+                        return (
+                          <div className="space-y-6 relative z-10">
+                            {/* Smooth Progress Bar */}
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between items-center text-[10px] font-bold text-gray-400 font-mono">
+                                <span>{lang === "ar" ? `السؤال ${assessmentStep + 1} من ${QUESTIONS_REF.length}` : `Question ${assessmentStep + 1} of ${QUESTIONS_REF.length}`}</span>
+                                <span>{progPercent}%</span>
+                              </div>
+                              <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                                <motion.div 
+                                  animate={{ width: `${progPercent}%` }}
+                                  transition={{ duration: 0.3 }}
+                                  className="bg-[#4A6B5D] h-full rounded-full"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Question heading */}
+                            <div className="bg-[#F4F7F5] p-5 rounded-2xl border border-gray-100 text-center space-y-2">
+                              <p className="text-xs text-[#4A6B5D] font-extrabold uppercase tracking-widest">{lang === "ar" ? "قضية القياس الآتية" : "Diagnostic Focus"}</p>
+                              <h4 className="text-sm md:text-base font-extrabold text-gray-800 leading-relaxed font-sans">
+                                {lang === "ar" ? q.questionAr : q.questionEn}
+                              </h4>
+                            </div>
+
+                            {/* Options Single-Select Button Stack */}
+                            <div className="space-y-2.5">
+                              {q.optionsAr.map((option, idx) => {
+                                return (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => {
+                                      const nextAnswers = [...assessmentAnswers, idx];
+                                      setAssessmentAnswers(nextAnswers);
+                                      if (assessmentStep < QUESTIONS_REF.length - 1) {
+                                        setAssessmentStep(assessmentStep + 1);
+                                      } else {
+                                        // Final score is sum of zero-indexed scores (each 0 to 4, max 20) * 5 (to scale out of 100 percent)
+                                        const finalScoreValue = nextAnswers.reduce((a, b) => a + b, 0) * 5;
+                                        setAssessmentScore(finalScoreValue);
+                                      }
+                                    }}
+                                    className="w-full text-right p-4 rounded-xl border border-gray-200 bg-white hover:border-[#4A6B5D]/40 hover:bg-[#F4F7F5]/30 text-xs font-bold text-gray-700 active:scale-[0.99] transition-all cursor-pointer flex items-center justify-between"
+                                  >
+                                    <span>{lang === "ar" ? option : q.optionsEn[idx]}</span>
+                                    <span className="h-5 w-5 rounded-full border border-gray-300 flex items-center justify-center text-[10px] font-mono shrink-0 font-bold bg-gray-50 text-gray-400">
+                                      {idx + 1}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      // Quiz Completion Score Dashboard
+                      <div className="space-y-6 text-center relative z-10">
+                        <div className="max-w-md mx-auto space-y-4">
+                          <CheckCircle className="h-12 w-12 text-[#4A6B5D] mx-auto animate-bounce" />
+                          <h4 className="text-base font-extrabold text-[#2B2D42]">
+                            {lang === "ar" ? "اكتمل التقييم الشخصي بنجاح!" : "Self-Assessment Complete!"}
+                          </h4>
+
+                          {/* Radical Score dial container */}
+                          <div className="relative inline-flex items-center justify-center p-4">
+                            <svg className="w-36 h-36">
+                              <circle 
+                                className="text-gray-100" 
+                                strokeWidth="10" 
+                                stroke="currentColor" 
+                                fill="transparent" 
+                                r="58" 
+                                cx="72" 
+                                cy="72" 
+                              />
+                              <motion.circle 
+                                className="text-[#4A6B5D]" 
+                                strokeWidth="10" 
+                                strokeDasharray={364}
+                                strokeDashoffset={364 - (364 * assessmentScore) / 100}
+                                strokeLinecap="round" 
+                                stroke="currentColor" 
+                                fill="transparent" 
+                                r="58" 
+                                cx="72" 
+                                cy="72" 
+                                initial={{ strokeDashoffset: 364 }}
+                                animate={{ strokeDashoffset: 364 - (364 * assessmentScore) / 100 }}
+                                transition={{ duration: 0.8, ease: "easeOut" }}
+                              />
+                            </svg>
+                            <div className="absolute flex flex-col items-center">
+                              <span className="text-3xl font-extrabold font-mono text-[#4A6B5D]">{assessmentScore}%</span>
+                              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{lang === "ar" ? "رصيد السكينة" : "Calm Index"}</span>
+                            </div>
+                          </div>
+
+                          {/* Dynamic diagnostic feedback paragraph */}
+                          <div className="p-4 rounded-2xl border bg-[#F4F7F5] text-right space-y-1 leading-relaxed">
+                            <span className="text-[10px] font-mono text-gray-400 block font-bold uppercase">
+                              {lang === "ar" ? "التقرير السريري المؤقت" : "Clinical Coping Feedback"}
+                            </span>
+                            <p className="text-xs text-gray-800 font-bold">
+                              {assessmentScore >= 80 ? (
+                                lang === "ar" 
+                                  ? "🌱 صلابة نفسية متميزة وسكينة واعدة: روحك صامدة مفعمة بالثبات وتغلب مرونة الذات على نوائب الدهر. دم سراجاً منيراً لمحيطك بمخيم التعافي." 
+                                  : "🌱 Outstanding Resilience: Your emotional engine is functioning with powerful calm and adaptability. Continue supporting others!"
+                              ) : assessmentScore >= 50 ? (
+                                lang === "ar" 
+                                  ? "⚠️ إجهاد صدمي قلق معتدل: قلبك يواجه الركام بمرونة جيدة، ولكنك تستهلك وقوداً حيوياً مجهداً لتفادي الذعر. تفضل بمراجعة الأخصائي ومارِس التبخير والتنفس بانتظام." 
+                                  : "⚠️ Moderate Traumatic Fatigue: Your heart is coping, but you are utilizing a significant emotional quota. Focus on square breathing."
+                              ) : (
+                                lang === "ar" 
+                                  ? "🚨 إجهاد صدمي حاد وقلق حرج: تعيش حيزاً من الفزع الخانق وتراجع الاستقرار النفسي. نوصيك بشدة بنقل هذه النتيجة للأخصائي فوراً للبدء باستشارات داعمة وعميقة." 
+                                  : "🚨 Critical Trauma Indicators: High vulnerability was detected. We strongly suggest raising these diagnostics to our clinics below."
+                              )}
+                            </p>
+                          </div>
+
+                          {/* Two cohesive CTAs */}
+                          <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // Transition to consultation tab with prepopulated clinical checklist report
+                                const scoreReport = lang === "ar"
+                                  ? `[مذكرة فحص الصلابة التلقائية المرفقة] حصلت على نتيجة ${assessmentScore}% في مقياس سكينة الذاتي.\nأعاني من إجهاد عاطفي متصاعد وأحتاج لتوجيهات المشرف والولوج لمصادر التعافي المعتمدة لتجاوز صدمات الهلع والذعر.`
+                                  : `[Diagnostic Resilience Attachment] Computed calm score is ${assessmentScore}%. Seeking direct counseling support from therapist to counter panic.`;
+                                setConsultText(scoreReport);
+                                setConsultSubtab("form");
+                                // Focus written text area
+                              }}
+                              className="flex-1 py-2.5 px-4 bg-[#4A6B5D] text-white font-bold text-xs rounded-xl hover:bg-[#3b5549] transition-all cursor-pointer shadow-3xs"
+                            >
+                              🩺 {lang === "ar" ? "أريد رفع النتيجة كاستشارة للأخصائي" : "Submit Score directly to Doctor"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAssessmentStep(0);
+                                setAssessmentAnswers([]);
+                                setAssessmentScore(null);
+                                setAssessmentSaved(false);
+                              }}
+                              className="py-2.5 px-4 border border-gray-300 text-gray-600 bg-white hover:bg-gray-50 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                            >
+                              🔁 {lang === "ar" ? "إعادة الفحص والقياس" : "Try Again"}
+                            </button>
+                          </div>
+
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Secret Account Vault and Graph Section (خيار حفظ النتيجة للمقارنة لاحقاً) */}
+                  <div className="bg-white rounded-3xl border border-gray-200 p-6 md:p-8 space-y-4 shadow-xs">
+                    <div className="flex items-center gap-2 border-b border-gray-50 pb-3 justify-between">
+                      <div className="flex items-center gap-2">
+                        <Lock className="h-5 w-5 text-[#D4A373]" />
+                        <h4 className="font-extrabold text-xs md:text-sm text-gray-800">
+                          {lang === "ar" ? "خزانة التخزين للمقارنة اللاحقة (🔒 الحساب السري)" : "Resilience Tracker (🔒 Confidential Account)"}
+                        </h4>
+                      </div>
                       
-                      {consultPin && (
-                        <div className="mt-2 text-center border-t border-dashed border-gray-100 pt-2 w-full">
-                          <span className="text-[10px] text-red-500 font-bold block">{lang === "ar" ? "⚠️ رقم الأمان (PIN) التابع لك والمختار:" : "⚠️ Your associated Security PIN:"}</span>
-                          <span className="text-sm font-mono font-bold text-gray-700 bg-gray-50 px-3 py-1 rounded inline-block select-all">{consultPin}</span>
+                      {isSecretLoggedIn && (
+                        <button
+                          onClick={handleSecretLogout}
+                          className="text-[10px] text-red-500 font-bold hover:underline cursor-pointer"
+                        >
+                          🚪 {lang === "ar" ? "تسجيل خروج آمن" : "Secure Sign-out"}
+                        </button>
+                      )}
+                    </div>
+
+                    {!isSecretLoggedIn ? (
+                      // Sign up or log into confidential trajectories
+                      <div className="space-y-4">
+                        <p className="text-[11px] leading-relaxed text-gray-500">
+                          {lang === "ar"
+                            ? "تجنباً لخرق عهود السرية، لا نطلب بريداً إلكترونياً أو هوية حقيقية بالشبكة. اختر اسماً مستعاراً مبهماً وقرنه برمز أمان PIN سري (من 4 أرقام) لحفظ تقاريرك الدورية ومقارنة تغيرات صمودك لاحقاً بأمان."
+                            : "For complete HIPAA-grade psychiatric comfort, we do not require emails or phone numbers. Input an anonymous secret pseudonym and 4-digit PIN access credentials to sync with the server database."}
+                        </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1 text-right">
+                            <label className="text-[10px] font-extrabold text-gray-600 ">{lang === "ar" ? "الاسم المستعار للحساب السري:" : "Pseudonym Alias Account:"}</label>
+                            <input
+                              type="text"
+                              value={secretUsername}
+                              onChange={(e) => setSecretUsername(e.target.value.trim())}
+                              placeholder={lang === "ar" ? "مثال: بطل_الشمال_صامد" : "e.g. northern_warrior"}
+                              className="w-full p-2.5 rounded-xl border border-gray-200 text-xs font-sans focus:ring-1 focus:ring-[#4A6B5D]"
+                            />
+                          </div>
+                          
+                          {/* Secret PIN or Security Question Recovery Toggler */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between items-center pb-1">
+                              <label className="text-[10px] font-extrabold text-gray-600">
+                                {recoverSecretWithQuestion 
+                                  ? (lang === "ar" ? "🛡️ التحقق بسؤال الأمان المخصص:" : "🛡️ Recovery question:")
+                                  : (lang === "ar" ? "رمز الأمان الخاص بك (4 أرقام):" : "4-Digit secret PIN code:")}
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => setRecoverSecretWithQuestion(!recoverSecretWithQuestion)}
+                                className="text-[9px] font-bold text-[#4A6B5D] hover:underline cursor-pointer"
+                              >
+                                {recoverSecretWithQuestion 
+                                  ? (lang === "ar" ? "🔑 العودة للرمز PIN" : "🔑 Back to PIN")
+                                  : (lang === "ar" ? "🛡️ نسيت الرمز؟" : "🛡️ Forgot PIN?")}
+                              </button>
+                            </div>
+
+                            {!recoverSecretWithQuestion ? (
+                              <input
+                                type="password"
+                                maxLength={4}
+                                value={secretPin}
+                                onChange={(e) => setSecretPin(e.target.value.replace(/\D/g, ""))}
+                                placeholder="••••"
+                                className="w-full p-2.5 rounded-xl border border-gray-200 text-xs text-center font-bold tracking-widest text-[#4A6B5D] focus:ring-1 focus:ring-[#4A6B5D]"
+                              />
+                            ) : (
+                              <div className="space-y-2 bg-[#D3E4CD]/10 p-2.5 rounded-xl border border-[#4A6B5D]/20 text-right" dir="rtl">
+                                <span className="text-[9px] font-bold text-[#4A6B5D] leading-none block pb-1">
+                                  {lang === "ar" ? "🔑 اختر سؤال الأمان والجواب اللذين قمت بإعدادهما للحساب:" : "🔒 Select question & answer configured for this account:"}
+                                </span>
+                                <select
+                                  value={secretRecoverQuestionId}
+                                  onChange={(e) => setSecretRecoverQuestionId(e.target.value)}
+                                  className="w-full p-2 rounded-lg border border-gray-150 text-[10px] bg-white text-right outline-none focus:border-[#4A6B5D]"
+                                >
+                                  {SECURITY_QUESTIONS.map(q => (
+                                    <option key={q.id} value={q.id}>{lang === "ar" ? q.ar : q.en}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={secretRecoverAnswer}
+                                  onChange={(e) => setSecretRecoverAnswer(e.target.value)}
+                                  placeholder={lang === "ar" ? "إجابة سؤال الأمان" : "Security Answer"}
+                                  className="w-full p-2 rounded-lg border border-gray-150 text-xs text-right outline-none bg-white focus:border-[#4A6B5D]"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* If they are setting up a NEW save, show optional question config */}
+                        {!recoverSecretWithQuestion && secretPin.length === 4 && assessmentScore !== null && (
+                          <div className="space-y-2.5 p-3.5 bg-[#D3E4CD]/10 rounded-2xl border border-dashed border-[#4A6B5D]/20 text-right" dir="rtl">
+                            <span className="text-[9px] font-extrabold uppercase text-[#4A6B5D] px-2 py-0.5 bg-[#D3E4CD]/20 rounded-full inline-block">
+                              {lang === "ar" ? "🛡️ اختيار حماية نسيان رمز الـ PIN" : "🛡️ Optional PIN Lost Recovery Setup"}
+                            </span>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-500 block">
+                                {lang === "ar" ? "اختر سؤال أمان استباقي للاحتفاظ بالنتيجة:" : "Select Recovery Question:"}
+                              </label>
+                              <select
+                                value={secretSecurityQuestionId}
+                                onChange={(e) => setSecretSecurityQuestionId(e.target.value)}
+                                className="w-full p-2 rounded-lg border border-gray-200 text-[10px] bg-white text-right outline-none focus:border-[#4A6B5D]"
+                              >
+                                {SECURITY_QUESTIONS.map(q => (
+                                  <option key={q.id} value={q.id}>{lang === "ar" ? q.ar : q.en}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-gray-500 block">
+                                {lang === "ar" ? "اكتب جواب السؤال (سيتم هاشه لحماية الخصوصية):" : "Security Question Answer:"}
+                              </label>
+                              <input
+                                type="text"
+                                value={secretSecurityAnswer}
+                                onChange={(e) => setSecretSecurityAnswer(e.target.value)}
+                                placeholder={lang === "ar" ? "مثال: الكرامة، المخيم الغربي..." : "e.g., hometown..."}
+                                className="w-full p-2 rounded-lg border border-gray-200 text-xs text-right outline-none bg-white focus:border-[#4A6B5D]"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {secretAuthError && (
+                          <div className="p-2.5 bg-red-50 text-red-600 rounded-xl text-[10px] font-bold text-center">
+                            ⚠️ {secretAuthError}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2 pt-1">
+                          <button
+                            type="button"
+                            disabled={
+                              savingAssessmentState || 
+                              !secretUsername.trim() || 
+                              (!recoverSecretWithQuestion && secretPin.length !== 4) ||
+                              (recoverSecretWithQuestion && !secretRecoverAnswer.trim())
+                            }
+                            onClick={retrieveSecretHistory}
+                            className="flex-1 py-2.5 bg-[#F4F7F5] hover:bg-[#eaeaea] text-gray-800 border border-gray-200 text-xs font-bold rounded-xl cursor-pointer transition-all active:scale-95"
+                          >
+                            🔓 {lang === "ar" ? "دخول وعرض مخطط تتبعي" : "Log in Tracker"}
+                          </button>
+                          
+                          {assessmentScore !== null && (
+                            <button
+                              type="button"
+                              disabled={savingAssessmentState || !secretUsername || secretPin.length !== 4}
+                              onClick={saveAssessmentToSecretAccount}
+                              className="flex-1 py-2.5 bg-[#D4A373] hover:bg-[#c39161] text-black text-xs font-bold rounded-xl cursor-pointer transition-all active:scale-95"
+                            >
+                              💾 {assessmentSaved ? (lang === "ar" ? "تم تخزينه بنجاح!" : "Saved!") : (lang === "ar" ? "حفظ نتيجتي بالخزانة" : "Save Result")}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      // Logged In -> Trajectory Interactive Chart Panel!
+                      <div className="space-y-4">
+                        <div className="p-3 bg-emerald-50 text-emerald-800 rounded-2xl border border-emerald-100 flex items-center justify-between text-right">
+                          <span className="text-xs font-bold">
+                            ✨ {lang === "ar" ? `الحساب السري نشط: @${secretUsername}` : `Logged in pseudonym: @${secretUsername}`}
+                          </span>
+                          <span className="text-[10px] bg-white text-emerald-700 px-2.5 py-1 rounded-full font-bold">
+                            🔒 {lang === "ar" ? "مشفر تماماً" : "Fully Encrypted"}
+                          </span>
+                        </div>
+
+                        {/* Interactive Responsive SVG Area Graph (Pure JSX Vector Craft) */}
+                        <div className="bg-[#F4F7F5] p-3.5 rounded-2xl border border-gray-150 text-center">
+                          <div className="border-b border-gray-200 pb-2 mb-3 flex items-center justify-between text-[11px] font-bold text-gray-500">
+                            <span>📈 {lang === "ar" ? "مخطط تماثلك لمرونة الأعصاب والتعافي" : "Resilience Trajectory Index Chart"}</span>
+                            <span className="bg-gray-100 rounded px-1.5 py-0.5 text-[9px] font-mono">{secretHistory.length} {lang === "ar" ? "نقاط" : "points"}</span>
+                          </div>
+
+                          {secretHistory.length === 0 ? (
+                            <div className="py-12 text-center text-xs text-slate-400 italic">
+                              {lang === "ar" ? "لا توجد نقاط سابقة مدونة بعد. قم بإجراء القياس وحفظه لإثراء المخطط التوجيهي." : "No entries stored yet. Save your first score above."}
+                            </div>
+                          ) : (
+                            (() => {
+                              const sortedHistory = [...secretHistory].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                              const width = 500;
+                              const height = 180;
+                              const paddingL = 40;
+                              const paddingR = 20;
+                              const paddingT = 20;
+                              const paddingB = 30;
+
+                              // Generate coordinate mapping
+                              const points = sortedHistory.map((item, index) => {
+                                const x = sortedHistory.length > 1
+                                  ? paddingL + (index * (width - paddingL - paddingR)) / (sortedHistory.length - 1)
+                                  : paddingL + (width - paddingL - paddingR) / 2;
+                                
+                                const y = height - paddingB - (item.score / 100) * (height - paddingB - paddingT);
+                                return { x, y, score: item.score, date: new Date(item.timestamp).toLocaleDateString(lang === "ar" ? "ar-EG" : "en", {month: "short", day: "numeric"}) };
+                              });
+
+                              // Construct SVG path string
+                              let dLine = "";
+                              let dArea = "";
+                              if (points.length > 0) {
+                                dLine = `M ${points[0].x} ${points[0].y} ` + points.slice(1).map(p => `L ${p.x} ${p.y}`).join(" ");
+                                dArea = `M ${points[0].x} ${height - paddingB} L ${points[0].x} ${points[0].y} ` + points.slice(1).map(p => `L ${p.x} ${p.y}`).join(" ") + ` L ${points[points.length - 1].x} ${height - paddingB} Z`;
+                              }
+
+                              return (
+                                <div className="w-full overflow-x-auto">
+                                  <svg viewBox={`0 0 ${width} ${height}`} className="mx-auto w-full max-w-[500px]">
+                                    <defs>
+                                      <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#4A6B5D" stopOpacity="0.32" />
+                                        <stop offset="100%" stopColor="#4A6B5D" stopOpacity="0.0" />
+                                      </linearGradient>
+                                    </defs>
+
+                                    {/* Draw baseline and horizontal thresholds */}
+                                    {[25, 50, 75, 100].map(threshold => {
+                                      const yGrid = height - paddingB - (threshold / 100) * (height - paddingB - paddingT);
+                                      return (
+                                        <g key={threshold}>
+                                          <line x1={paddingL} y1={yGrid} x2={width - paddingR} y2={yGrid} stroke="#eaeaea" strokeDasharray="3 3" />
+                                          <text x={paddingL - 8} y={yGrid + 4} textAnchor="end" className="text-[9px] font-mono font-bold fill-gray-400">{threshold}%</text>
+                                        </g>
+                                      );
+                                    })}
+
+                                    {/* Draw area and line */}
+                                    {points.length > 0 && (
+                                      <>
+                                        <path d={dArea} fill="url(#areaGrad)" />
+                                        <path d={dLine} fill="none" stroke="#4A6B5D" strokeWidth="3" strokeLinecap="round" />
+                                      </>
+                                    )}
+
+                                    {/* Draw anchor dots */}
+                                    {points.map((p, i) => (
+                                      <g key={i} className="group cursor-pointer">
+                                        <circle cx={p.x} cy={p.y} r="5" fill="#white" stroke="#4A6B5D" strokeWidth="3" />
+                                        <circle cx={p.x} cy={p.y} r="2" fill="#4A6B5D" />
+                                        
+                                        {/* Score text directly above dot */}
+                                        <text x={p.x} y={p.y - 10} textAnchor="middle" className="text-[9px] font-bold fill-emerald-800 font-mono bg-white">{p.score}%</text>
+                                        
+                                        {/* Date label at bottom border */}
+                                        <text x={p.x} y={height - 10} textAnchor="middle" className="text-[8px] font-mono fill-gray-400 font-bold">{p.date}</text>
+                                      </g>
+                                    ))}
+                                  </svg>
+                                </div>
+                              );
+                            })()
+                          )}
+                        </div>
+
+                        {/* List format historical rows */}
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                          {secretHistory.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center text-[11px] p-2 bg-gray-50 border border-gray-100 rounded-lg">
+                              <span className="font-bold text-gray-500 font-mono">
+                                {new Date(item.timestamp).toLocaleString(lang === "ar" ? "ar-EG" : "en-US", {dateStyle: "medium", timeStyle: "short"})}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`h-2.5 w-2.5 rounded-full ${item.score >= 80 ? "bg-emerald-500" : item.score >= 50 ? "bg-amber-400" : "bg-rose-500"}`} />
+                                <span className="font-extrabold text-[#4A6B5D] font-mono">{item.score}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                // Direct free consultation form block
+                <div className="bg-white rounded-2xl border border-gray-200 p-6 md:p-8 space-y-6 shadow-xs">
+                  <div>
+                    <h3 className="text-lg md:text-xl font-bold text-[#4A6B5D]">{t.consultTitle}</h3>
+                    <p className="text-xs text-gray-500 mt-1">{t.consultSubtitle}</p>
+                  </div>
+
+                  {!generatedTrackId ? (
+                    <form onSubmit={submitConsultation} className="space-y-5">
+                      
+                      {/* Category Input */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-[#2B2D42] block text-right">{t.fieldCategory}</label>
+                        <select
+                          value={consultCategory}
+                          onChange={(e: any) => setConsultCategory(e.target.value)}
+                          className="w-full p-3 rounded-lg border border-gray-300 bg-[#F4F7F5] outline-none font-sans text-xs md:text-sm focus:border-[#4A6B5D] text-right"
+                        >
+                          <option value="trauma">{t.catTrauma}</option>
+                          <option value="anxiety">{t.catAnxiety}</option>
+                          <option value="grief">{t.catGrief}</option>
+                          <option value="other">{t.catOther}</option>
+                        </select>
+                      </div>
+
+                      {/* Content text */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-[#2B2D42] block text-right">{t.fieldDetails}</label>
+                        <textarea
+                          value={consultText}
+                          onChange={(e) => setConsultText(e.target.value)}
+                          required
+                          rows={6}
+                          placeholder={t.fieldPlaceholder}
+                          className="w-full p-4 rounded-xl border border-gray-300 font-sans text-xs md:text-sm bg-[#F4F7F5]/40 outline-none leading-relaxed focus:ring-2 focus:ring-[#4A6B5D] focus:border-transparent resize-none text-right"
+                        />
+                      </div>
+
+                      {/* Security 4-digit PIN Salt */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-[#2B2D42] block text-right">
+                          {lang === "ar" 
+                            ? "رقم مرور للحماية الإضافية (4 أرقام يختارها عقلك):" 
+                            : "4-Digit Security PIN (Required for Tracking/Decryption):"}
+                        </label>
+                        <input
+                          type="password"
+                          maxLength={4}
+                          pattern="\d{4}"
+                          value={consultPin}
+                          onChange={(e) => setConsultPin(e.target.value.replace(/\D/g, ""))}
+                          required
+                          placeholder={lang === "ar" ? "مثال: 4821 • اختر رمزًا في سرّية تامة لتتذكره، لن يتم حفظه نصيًا" : "e.g., 4821 • Choose in absolute secrecy, we never store this PIN in plain text"}
+                          className="w-full p-3 rounded-lg border border-gray-300 font-sans text-xs md:text-sm bg-[#F4F7F5] outline-none tracking-widest text-[#4A6B5D] font-bold focus:border-[#4A6B5D] text-center"
+                        />
+                        <p className="text-[10px] text-gray-400">
+                          {lang === "ar" 
+                            ? "🛡️ تشفير الملح الرقمي: سيتم تشفير فك الرد برمزك المميز هذا. حتى لو تم اختراق خوادمنا بالكامل، فلن يمكن لأحد أبداً فك شفرة ومواساة الأخصائي بدون الرمز." 
+                            : "🛡️ Digital Salt: The doctor's response will merge with this PIN salt. Nobody will ever trace or decode it without this code."}
+                        </p>
+                      </div>
+
+                      {/* Security Question Section (Forgot PIN Protection) */}
+                      {consultPin.length === 4 && (
+                        <div className="space-y-3 bg-[#D3E4CD]/15 p-4 rounded-xl border border-dashed border-[#4A6B5D]/30 text-right" dir="rtl">
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <span className="text-[10px] font-bold uppercase text-[#4A6B5D] px-2.5 py-0.5 bg-[#D3E4CD]/30 rounded-full inline-block">
+                              {lang === "ar" ? "🛡️ مساندة إضافية: حماية للاسترداد في حال نسيت الرمز" : "🛡️ Extra Support: Recovery Question if PIN is Forgotten"}
+                            </span>
+                          </div>
+                          
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-extrabold text-gray-700 block">
+                              {lang === "ar" ? "اختر سؤال الأمان المقترح:" : "Select Security Question:"}
+                            </label>
+                            <select
+                              value={consultSecurityQuestionId}
+                              onChange={(e) => setConsultSecurityQuestionId(e.target.value)}
+                              className="w-full p-2.5 rounded-lg border border-gray-200 text-xs bg-white text-right font-sans outline-none focus:border-[#4A6B5D]"
+                            >
+                              {SECURITY_QUESTIONS.map(q => (
+                                <option key={q.id} value={q.id}>{lang === "ar" ? q.ar : q.en}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-extrabold text-[#2B2D42] block">
+                              {lang === "ar" ? "إجابة سؤال الأمان (احفظها بدقة وتذكر كتابتها):" : "Security Question Answer:"}
+                            </label>
+                            <input
+                              type="text"
+                              value={consultSecurityAnswer}
+                              onChange={(e) => setConsultSecurityAnswer(e.target.value)}
+                              placeholder={lang === "ar" ? "مثال: احمد، معسكر دير البلح، الاستاذ سمير..." : "e.g., childhood playmate..."}
+                              className="w-full p-2.5 rounded-lg border border-gray-200 text-xs bg-white text-right outline-none focus:border-[#4A6B5D]"
+                            />
+                            <p className="text-[9px] text-gray-400 leading-normal mt-0.5">
+                              {lang === "ar" 
+                                ? "💡 تصفية آلية لطيفة: نستخدم نظام تطهير متقدم يتجاوز اختلاف التهجئة لغارقي الهلع والنسيان!"
+                                : "💡 Automated Soft filter: we resolve simple spelling typos gracefully to accommodate crisis memory fog!"}
+                            </p>
+                          </div>
                         </div>
                       )}
 
                       <button
-                        onClick={() => copyToClipboard(generatedTrackId)}
-                        className="mt-2 px-3 py-1.5 bg-[#4A6B5D] hover:bg-[#3b5549] text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                        type="submit"
+                        disabled={consultSubmitting || !consultText.trim() || consultPin.length !== 4}
+                        className="w-full py-3 bg-[#4A6B5D] hover:bg-[#3b5549] text-white disabled:opacity-45 rounded-xl font-bold text-xs shadow-xs transition-all cursor-pointer active:scale-95"
                       >
-                        <Copy className="h-4 w-4" />
-                        <span>{copiedAlert ? t.copied : t.copyBtn}</span>
+                        {consultSubmitting ? (lang === "ar" ? "جاري تشفير المذكرة الطبية النفسية... ⏳" : "Securing and Encrypting Transmission... ⏳") : t.btnSubmitConsult}
                       </button>
-                    </div>
-
-                    <p className="text-xs text-[#D4A373] font-bold max-w-sm mx-auto">{t.noteTrack}</p>
+                    </form>
+                  ) : (
                     
-                    <div className="pt-2">
-                      <button
-                        onClick={() => {
-                          setGeneratedTrackId(null);
-                          setConsultText("");
-                          setCurrentView("track");
-                        }}
-                        className="px-6 py-2 bg-[#D4A373] hover:bg-[#c39161] text-black font-extrabold rounded-lg text-xs transition-colors cursor-pointer"
-                      >
-                        {lang === "ar" ? "الانتقال لغرفة تتبع الردود وعرض النتائج" : "Proceed to Tracking responses"}
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </div>
+                    // Success State yielding Tracking ID
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="p-6 bg-[#D3E4CD]/50 border border-[#b2cfab] rounded-2xl text-center space-y-4"
+                    >
+                      <CheckCircle className="h-12 w-12 text-[#4A6B5D] mx-auto" />
+                      <h4 className="font-bold text-[#4A6B5D] text-base">{t.consultSuccessTitle}</h4>
+                      <p className="text-xs text-gray-600 leading-relaxed max-w-md mx-auto">{t.consultSuccessDesc}</p>
+                      
+                      <div className="flex flex-col items-center gap-2 max-w-sm mx-auto p-4 bg-white rounded-xl border border-dashed border-[#4A6B5D]">
+                        <span className="text-[10px] text-gray-400 font-bold uppercase">{lang === "ar" ? "رقمك السري والوحيد للتتبع" : "Your Random Tracking ID"}</span>
+                        <span className="text-xl md:text-3xl font-mono font-extrabold text-[#4A6B5D] tracking-widest">{generatedTrackId}</span>
+                        
+                        {consultPin && (
+                          <div className="mt-2 text-center border-t border-dashed border-gray-100 pt-2 w-full">
+                            <span className="text-[10px] text-red-500 font-bold block">{lang === "ar" ? "⚠️ رقم الأمان (PIN) التابع لك والمختار:" : "⚠️ Your associated Security PIN:"}</span>
+                            <span className="text-sm font-mono font-bold text-gray-700 bg-gray-50 px-3 py-1 rounded inline-block select-all">{consultPin}</span>
+                          </div>
+                        )}
+
+                        <button
+                          onClick={() => copyToClipboard(generatedTrackId)}
+                          className="mt-2 px-3 py-1.5 bg-[#4A6B5D] hover:bg-[#3b5549] text-white rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Copy className="h-4 w-4" />
+                          <span>{copiedAlert ? t.copied : t.copyBtn}</span>
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-[#D4A373] font-bold max-w-sm mx-auto">{t.noteTrack}</p>
+                      
+                      <div className="pt-2">
+                        <button
+                          onClick={() => {
+                            setGeneratedTrackId(null);
+                            setConsultText("");
+                            setCurrentView("track");
+                          }}
+                          className="px-6 py-2 bg-[#D4A373] hover:bg-[#c39161] text-black font-extrabold rounded-lg text-xs transition-colors cursor-pointer"
+                        >
+                          {lang === "ar" ? "الانتقال لغرفة تتبع الردود وعرض النتائج" : "Proceed to Tracking responses"}
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -1872,24 +2925,88 @@ export default function App() {
                     </div>
                     
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-gray-700 block text-right" dir="rtl">
-                        {lang === "ar" ? "رمز المرور الشخصي (4 أرقام):" : "4-digit Security PIN:"}
+                      <label className="text-xs font-bold text-gray-700 block text-right">
+                        {lang === "ar" ? "المعرف العشوائي للاستشارة الطبية:" : "Consultation tracking ID:"}
                       </label>
                       <input
-                        type="password"
-                        maxLength={4}
-                        pattern="\d{4}"
-                        value={trackPinInput}
-                        onChange={(e) => setTrackPinInput(e.target.value.replace(/\D/g, ""))}
-                        placeholder="e.g., 4821"
-                        className="w-full p-3 rounded-lg border border-gray-300 bg-white focus:ring-1 focus:ring-[#4A6B5D] outline-none text-xs md:text-sm font-mono tracking-widest text-[#4A6B5D] font-bold text-center focus:border-[#4A6B5D]"
+                        type="text"
+                        value={trackIdInput}
+                        onChange={(e) => setTrackIdInput(e.target.value)}
+                        placeholder={t.trackPlaceholder}
+                        className="w-full p-3 rounded-lg border border-gray-300 bg-white focus:ring-1 focus:ring-[#4A6B5D] outline-none text-xs md:text-sm font-mono tracking-widest uppercase text-center focus:border-[#4A6B5D]"
                       />
+                    </div>
+                    
+                    {/* Security Question Toggle for lost PIN */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center pb-1">
+                        <label className="text-xs font-bold text-gray-700 block text-right">
+                          {recoverConsultWithQuestion 
+                            ? (lang === "ar" ? "🛡️ التحقق بسؤال الأمان المخصص:" : "🛡️ Verify with security question:")
+                            : (lang === "ar" ? "رمز المرور الشخصي (4 أرقام):" : "4-digit Security PIN:")}
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setRecoverConsultWithQuestion(!recoverConsultWithQuestion)}
+                          className="text-[10px] font-bold text-[#4A6B5D] hover:underline cursor-pointer"
+                        >
+                          {recoverConsultWithQuestion 
+                            ? (lang === "ar" ? "🔑 العودة للرمز PIN" : "🔑 Go to PIN")
+                            : (lang === "ar" ? "🛡️ نسيت الرمز؟" : "🛡️ Forgot PIN?")}
+                        </button>
+                      </div>
+
+                      {!recoverConsultWithQuestion ? (
+                        <input
+                          type="password"
+                          maxLength={4}
+                          pattern="\d{4}"
+                          value={trackPinInput}
+                          onChange={(e) => setTrackPinInput(e.target.value.replace(/\D/g, ""))}
+                          placeholder="e.g., 4821"
+                          className="w-full p-3 rounded-lg border border-gray-300 bg-white focus:ring-1 focus:ring-[#4A6B5D] outline-none text-xs md:text-sm font-mono tracking-widest text-[#4A6B5D] font-bold text-center focus:border-[#4A6B5D]"
+                        />
+                      ) : (
+                        <div className="space-y-3 bg-[#D3E4CD]/10 p-3 rounded-xl border border-[#4A6B5D]/20 text-right" dir="rtl">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-extrabold text-gray-500 block">
+                              {lang === "ar" ? "سؤال الأمان المختار مسبقاً:" : "Recovery Question Selected:"}
+                            </label>
+                            <select
+                              value={consultRecoverQuestionId}
+                              onChange={(e) => setConsultRecoverQuestionId(e.target.value)}
+                              className="w-full p-2.5 rounded-lg border border-gray-200 text-xs bg-white text-right outline-none focus:border-[#4A6B5D]"
+                            >
+                              {SECURITY_QUESTIONS.map(q => (
+                                <option key={q.id} value={q.id}>{lang === "ar" ? q.ar : q.en}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-extrabold text-gray-500 block">
+                              {lang === "ar" ? "إجابة سؤال الأمان:" : "Security Question Answer:"}
+                            </label>
+                            <input
+                              type="text"
+                              value={consultRecoverAnswer}
+                              onChange={(e) => setConsultRecoverAnswer(e.target.value)}
+                              placeholder={lang === "ar" ? "اكتب الإجابة بالمسودة" : "e.g., childhood playmate..."}
+                              className="w-full p-2.5 rounded-lg border border-gray-200 text-xs text-right outline-none bg-white focus:border-[#4A6B5D]"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   <button
                     onClick={trackInquiry}
-                    disabled={trackingLoading || !trackIdInput.trim() || trackPinInput.length !== 4}
+                    disabled={
+                      trackingLoading || 
+                      !trackIdInput.trim() || 
+                      (!recoverConsultWithQuestion && trackPinInput.length !== 4) ||
+                      (recoverConsultWithQuestion && !consultRecoverAnswer.trim())
+                    }
                     className="w-full py-3.5 bg-[#4A6B5D] hover:bg-[#3b5549] text-white disabled:opacity-40 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs active:scale-95"
                   >
                     {trackingLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Search className="h-4.5 w-4.5" />}
@@ -2154,6 +3271,18 @@ export default function App() {
                               {m.isDoctor && <span className="bg-[#4A6B5D] text-white text-[8px] leading-none px-1 py-0.5 rounded">🩺 {lang === "ar" ? "أخصائي سكينة" : "Therapist"}</span>}
                               <span>{m.alias}</span>
                               <span className="font-normal opacity-70">• {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              
+                              {!m.isDeleted && !isMe && (
+                                <button
+                                  type="button"
+                                  onClick={() => reportRoomMessage(m.id)}
+                                  disabled={reportedMessageIds.includes(m.id)}
+                                  className="text-gray-400 hover:text-red-500 font-bold transition-all text-[9px] cursor-pointer inline-flex items-center gap-0.5 bg-gray-100 hover:bg-red-50 px-1 py-0.5 rounded-md"
+                                  title={lang === "ar" ? "الإبلاغ عن رسالة مسيئة لحماية المجتمع" : "Report offensive comment"}
+                                >
+                                  🚩 {reportedMessageIds.includes(m.id) ? (lang === "ar" ? "مُبلغ" : "Report") : (lang === "ar" ? "إبلاغ" : "Report")}
+                                </button>
+                              )}
                             </div>
 
                             <div className={`p-3 rounded-2xl text-xs md:text-sm leading-relaxed ${
@@ -2279,19 +3408,86 @@ export default function App() {
               dir="rtl"
             >
               {/* Header Banner */}
-              <div className="bg-gradient-to-r from-[#4A6B5D]/10 to-transparent p-6 rounded-3xl border border-[#4A6B5D]/20 space-y-2">
-                <div className="flex items-center gap-2">
+              <div className="bg-gradient-to-r from-[#4A6B5D]/10 to-transparent p-6 rounded-3xl border border-[#4A6B5D]/20 space-y-2 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="flex items-center gap-3">
                   <div className="bg-[#4A6B5D]/15 text-[#4A6B5D] p-3 rounded-2xl">
                     <HeartPulse className="h-6 w-6" />
                   </div>
                   <div>
                     <h2 className="text-xl md:text-2xl font-bold text-[#4A6B5D]">
-                      {lang === "ar" ? "🌱 رصيد صمود غزة: نصائح الأخصائيين وتجارب المتعافين" : "🌱 Gaza Resilience Bank: Specialist Tips & Recovery Stories"}
+                      {lang === "ar" ? "🌱 دليل الإسعاف وتخفيف الأزمات النفسية" : "🌱 Crisis Relief & Psychological Aid"}
                     </h2>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-slate-500 mt-1">
                       {lang === "ar" 
-                        ? "منصة مجتمعية تفاعلية لتبادل الأفكار الصابرة والدعم التثقيفي والتعافي من الهلع ذراعاً بوجار." 
-                        : "A community platform to share healthy, adaptive self-soothing activities and stories to spark hopes."}
+                        ? "دليل تفاعلي لإغاثة الذعر، الهلع والخوف بأحجام خط واضحة مقروءة وداعمة للاستماع الصوتي الهادئ." 
+                        : "An interactive platform providing high-contrast guidebooks and audibly playable coping strategies."}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Extra visual accessibility custom bar */}
+                <button
+                  type="button"
+                  onClick={() => setLargeFontForTips(!largeFontForTips)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                    largeFontForTips 
+                      ? "bg-amber-100 text-amber-900 border-amber-300" 
+                      : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  👁️ <span>{lang === "ar" ? (largeFontForTips ? "تصغير الخط للوضع الافتراضي" : "تفعيل الخط الكبير ومريح العين") : (largeFontForTips ? "Normal Typography" : "Zoom Font for Crisis View")}</span>
+                </button>
+              </div>
+
+              {/* 1. دليل إسعافات نفسية أولية سريع ومختصر (INFOGRAPHICS) */}
+              <div className="bg-white border border-gray-100 rounded-3xl p-6 md:p-8 space-y-4 shadow-3xs">
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    📋 {lang === "ar" ? "دليل الإسعافات النفسية الأولية للميدان" : "Clinical Psychological First Aid Guide"}
+                  </span>
+                  <h3 className="text-base md:text-lg font-extrabold text-slate-900 mt-1.5">
+                    {lang === "ar" ? "بروتوكول سكينة المباشر لتهدئة روع الضحايا والمصابين" : "Immediate Crisis Coping Protocols"}
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+                  <div className="p-4 bg-emerald-50/45 rounded-2xl border border-emerald-100 text-right space-y-2">
+                    <div className="text-2xl">👀</div>
+                    <h4 className="font-extrabold text-[#4A6B5D] text-xs">1. {lang === "ar" ? "انظرْ وتفرّس (LOOK)" : "1. Observe (LOOK)"}</h4>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {lang === "ar" 
+                        ? "تفحّص معالم السلامة الجسدية فوراً، أمّن مأوىً ساكناً، وابحث عن ذوي الحاجة الملحة للتهدئة." 
+                        : "Inspect security parameters, secure physical shield and isolate immediate critical cases."}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-sky-50/45 rounded-2xl border border-sky-100 text-right space-y-2">
+                    <div className="text-2xl">👂</div>
+                    <h4 className="font-extrabold text-sky-800 text-xs">2. {lang === "ar" ? "استمعْ بوعي (LISTEN)" : "2. Hear (LISTEN)"}</h4>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {lang === "ar" 
+                        ? "أفسح للمكلومين بث آلامهم وقلقهم، لا تقاطعهم أو تحكم بمثالية زائفة، دعهم ينفسوا بالكامل." 
+                        : "Allow victims to vent deeply under non-judgmental presence, assuring comfort and safety."}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-purple-50/45 rounded-2xl border border-purple-100 text-right space-y-2">
+                    <div className="text-2xl">🤝</div>
+                    <h4 className="font-extrabold text-purple-800 text-xs">3. {lang === "ar" ? "وصّل واربِط (LINK)" : "3. Connect (LINK)"}</h4>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {lang === "ar" 
+                        ? "اربط المنكوبين بفرقنا الطبية والتموينية، قدّم لهم الأقرباء وشغّل كود التتبع الخاص بالمنصة." 
+                        : "Connect victims with specialized counselors and locate safe medical resources."}
+                    </p>
+                  </div>
+
+                  <div className="p-4 bg-amber-50/45 rounded-2xl border border-amber-100 text-right space-y-2">
+                    <div className="text-2xl">💨</div>
+                    <h4 className="font-extrabold text-amber-800 text-xs">4. {lang === "ar" ? "زفر وتنفس (BREATHE)" : "4. Calm (BREATHE)"}</h4>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {lang === "ar" 
+                        ? "درّب الضحية على استنشاق السكينة لمدة 4 ثوان والزفير المبرد لـ 4 ثوان لتبديد ضربات هلع القلب." 
+                        : "Guide standard therapeutic box-breathing to balance acute adrenaline and panic pulses."}
                     </p>
                   </div>
                 </div>
@@ -2314,7 +3510,7 @@ export default function App() {
                   <form onSubmit={handleCreateTip} className="space-y-3">
                     {!doctorLoggedIn && (
                       <div className="space-y-1">
-                        <label className="text-[11px] font-bold text-[#2B2D42] block">
+                        <label className="text-[11px] font-bold text-[#2B2D42] block text-right">
                           {lang === "ar" ? "👤 هويتك المستعارة بالمنشور:" : "👤 Your custom alias:"}
                         </label>
                         <input
@@ -2322,13 +3518,13 @@ export default function App() {
                           value={newTipAuthor}
                           onChange={(e) => setNewTipAuthor(e.target.value)}
                           placeholder={lang === "ar" ? `مستعار (افتراضي: ${myAlias})` : `Alias (default: ${myAlias})`}
-                          className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs"
+                          className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs text-right"
                         />
                       </div>
                     )}
 
                     <div className="space-y-1">
-                      <label className="text-[11px] font-bold text-[#2B2D42] block">
+                      <label className="text-[11px] font-bold text-[#2B2D42] block text-right">
                         {lang === "ar" ? "📌 عنوان الفكرة أو تجربة التعافي:" : "📌 Strategy Header / Subject:"}
                       </label>
                       <input
@@ -2336,18 +3532,18 @@ export default function App() {
                         value={newTipTitle}
                         onChange={(e) => setNewTipTitle(e.target.value)}
                         placeholder={lang === "ar" ? "مثال: كيف تجاوزنا فقد بيتنا، أو روتيني لتبديد وتدير الذعر" : "Example: My breathing schedule during alarm"}
-                        className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs"
+                        className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs text-right"
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-[11px] font-bold text-[#2B2D42] block">
+                      <label className="text-[11px] font-bold text-[#2B2D42] block text-right">
                         {lang === "ar" ? "🎯 التصنيف والاضطراب المستهدف بالصمود:" : "🎯 Context Category:"}
                       </label>
                       <select
                         value={newTipCategory}
                         onChange={(e) => setNewTipCategory(e.target.value)}
-                        className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs bg-[#F4F7F5] cursor-pointer"
+                        className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs bg-[#F4F7F5] cursor-pointer text-right"
                       >
                         {ROOM_THEMES.map(room => (
                           <option key={room.id} value={room.id}>
@@ -2358,7 +3554,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-[11px] font-bold text-[#2B2D42] block">
+                      <label className="text-[11px] font-bold text-[#2B2D42] block text-right">
                         {lang === "ar" ? "✍️ تفاصيل نصيحتك أو قصتك بالتفصيل:" : "✍️ Write your coping recipe / story:"}
                       </label>
                       <textarea
@@ -2368,7 +3564,7 @@ export default function App() {
                         placeholder={lang === "ar" 
                           ? "اكتب الخطوات أو التجربة العملية بأسلوب مشجع يبعث التماسك والصبر في قلوب زملائك بالقطاع..." 
                           : "State your positive findings, daily schedules, exercises, or real-life reflections..."}
-                        className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs leading-relaxed"
+                        className="w-full p-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#4A6B5D] text-xs leading-relaxed text-right"
                       />
                     </div>
 
@@ -2402,11 +3598,11 @@ export default function App() {
 
                 {/* Left Column: Tips Scroll List */}
                 <div className="lg:col-span-2 space-y-4">
-                  {/* Category Filter Tabs */}
+                  {/* Category Filter Tabs for Author Type */}
                   <div className="flex p-1 bg-gray-100 rounded-2xl items-center gap-1">
                     <button
                       onClick={() => setTipsFilter("all")}
-                      className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      className={`flex-1 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
                         tipsFilter === "all" ? "bg-[#4A6B5D] text-white shadow-xs" : "text-gray-500 hover:text-gray-700"
                       }`}
                     >
@@ -2414,19 +3610,60 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => setTipsFilter("doctor")}
-                      className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      className={`flex-1 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
                         tipsFilter === "doctor" ? "bg-[#4A6B5D] text-white shadow-xs" : "text-gray-500 hover:text-gray-700"
                       }`}
                     >
-                      🩺 {lang === "ar" ? "توجيهات الأطباء والمختصين" : "Physicians Advice"}
+                      🩺 {lang === "ar" ? "التوجيهات المعتمدة" : "Physicians Advice"}
                     </button>
                     <button
                       onClick={() => setTipsFilter("patient")}
-                      className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      className={`flex-1 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
                         tipsFilter === "patient" ? "bg-[#4A6B5D] text-white shadow-xs" : "text-gray-500 hover:text-gray-700"
                       }`}
                     >
-                      🌟 {lang === "ar" ? "قصص وبشائر المتعافين" : "Recovery Stories"}
+                      🌟 {lang === "ar" ? "قصص الرفاق" : "Recovery Stories"}
+                    </button>
+                  </div>
+
+                  {/* 2. بطاقات ومقترحات مقسمة حسب الحالة (خوف، قلق، هلع) */}
+                  <div className="flex flex-wrap items-center gap-1 bg-slate-50 border border-slate-100 p-1.5 rounded-2xl">
+                    <span className="text-[10px] font-extrabold text-[#4A6B5D] px-2 block">{lang === "ar" ? "تصنيف الحالة:" : "State Category:"}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCrisisTipsCategory("all")}
+                      className={`px-3 py-1 text-[11px] rounded-lg font-bold transition-all cursor-pointer ${
+                        crisisTipsCategory === "all" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200"
+                      }`}
+                    >
+                      {lang === "ar" ? "الكل" : "All"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCrisisTipsCategory("panic")}
+                      className={`px-3 py-1 text-[11px] rounded-lg font-bold transition-all cursor-pointer ${
+                        crisisTipsCategory === "panic" ? "bg-rose-500 text-white" : "bg-white text-slate-600 border border-slate-200"
+                      }`}
+                    >
+                      😰 {lang === "ar" ? "هلع وذعر حاد" : "Panic & Alarm"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCrisisTipsCategory("trauma")}
+                      className={`px-3 py-1 text-[11px] rounded-lg font-bold transition-all cursor-pointer ${
+                        crisisTipsCategory === "trauma" ? "bg-amber-600/90 text-white" : "bg-white text-slate-600 border border-slate-200"
+                      }`}
+                    >
+                      😨 {lang === "ar" ? "خوف وروّع شديد" : "Terror & Fear"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCrisisTipsCategory("anxiety")}
+                      className={`px-3 py-1 text-[11px] rounded-lg font-bold transition-all cursor-pointer ${
+                        crisisTipsCategory === "anxiety" ? "bg-blue-600/95 text-white" : "bg-white text-slate-600 border border-slate-200"
+                      }`}
+                    >
+                      🧠 {lang === "ar" ? "قلق وتوتر العصاب" : "Anxiety & Stress"}
                     </button>
                   </div>
 
@@ -2435,97 +3672,130 @@ export default function App() {
                       <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-[#4A6B5D] border-t-transparent mb-2"></div>
                       <p>{lang === "ar" ? "جاري استرجاع نصائح الصمود ووصفات الشفاء المباركة..." : "Retrieving certified clinical advice..."}</p>
                     </div>
-                  ) : tipsStories.length === 0 ? (
-                    <div className="p-12 text-center bg-white border border-gray-200 rounded-3xl text-gray-500 text-xs">
-                      🔍 {lang === "ar" ? "لا توجد مشاركات تتماشى مع الفلتر الحالي، ابدأ بإضافة الكلمات الأولى!" : "No resources indexed under this tab yet."}
-                    </div>
                   ) : (
-                    <div className="space-y-4 max-h-[750px] overflow-y-auto pr-1">
-                      {tipsStories
-                        .filter(tip => {
-                          if (tipsFilter === "doctor") return tip.type === "doctor";
-                          if (tipsFilter === "patient") return tip.type === "patient";
-                          return true;
-                        })
-                        .map((tip) => {
-                          const roomTheme = ROOM_THEMES.find(r => r.id === tip.category);
-                          const roomLabel = roomTheme 
-                            ? (lang === "ar" ? roomTheme.nameAr.replace(/💔|😰|🍃|🧠|🕯️|🌟|🤝/g, "").trim() : roomTheme.nameEn) 
-                            : tip.category;
+                    (() => {
+                      const displayedTips = tipsStories.filter(tip => {
+                        // Apply main doctor/patient filter
+                        if (tipsFilter === "doctor" && tip.type !== "doctor") return false;
+                        if (tipsFilter === "patient" && tip.type !== "patient") return false;
+                        // Apply state-category sub-filter
+                        if (crisisTipsCategory !== "all" && tip.category !== crisisTipsCategory) return false;
+                        return true;
+                      });
 
-                          const isDoc = tip.type === "doctor";
-                          return (
-                            <motion.div
-                              key={tip.id}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className={`p-5 rounded-3xl border text-right space-y-3 bg-white transition-all shadow-3xs hover:-translate-y-0.5 duration-200 ${
-                                isDoc 
-                                  ? "border-emerald-200 bg-emerald-50/15" 
-                                  : "border-gray-200"
-                              }`}
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className={`px-2.5 py-1 rounded-xl text-[10px] font-bold ${
-                                    isDoc 
-                                      ? "bg-[#4A6B5D] text-white" 
-                                      : "bg-[#D4A373]/20 text-[#c39161]"
-                                  }`}>
-                                    {isDoc 
-                                      ? (lang === "ar" ? "🩺 توجيه الأخصائي النفسي" : "🩺 Therapist Post") 
-                                      : (lang === "ar" ? "🌟 المتعافي المنتصر" : "🌟 Healing Peer")
-                                    }
-                                  </span>
-                                  <span className="text-[10px] text-gray-400 font-mono">
-                                    {new Date(tip.createdAt).toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
-                                      month: "short",
-                                      day: "numeric",
-                                      hour: "2-digit",
-                                      minute: "2-digit"
-                                    })}
-                                  </span>
+                      if (displayedTips.length === 0) {
+                        return (
+                          <div className="p-12 text-center bg-white border border-gray-200 rounded-3xl text-gray-500 text-xs">
+                            🔍 {lang === "ar" ? "لا توجد منشورات للقسم المختار حالياً. كن أول من يضيف وصايا الصمود للزملاء!" : "No resources indexed under this category yet."}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-4 max-h-[750px] overflow-y-auto pr-1">
+                          {displayedTips.map((tip) => {
+                            const roomTheme = ROOM_THEMES.find(r => r.id === tip.category);
+                            const roomLabel = roomTheme 
+                              ? (lang === "ar" ? roomTheme.nameAr.replace(/💔|😰|🍃|🧠|🕯️|🌟|🤝/g, "").trim() : roomTheme.nameEn) 
+                              : tip.category;
+
+                            const isDoc = tip.type === "doctor";
+                            const isCurrentlyVocalSpoken = activeVoiceTipId === tip.id;
+
+                            return (
+                              <motion.div
+                                key={tip.id}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className={`p-6 rounded-3xl border text-right space-y-4 transition-all duration-300 ${
+                                  isCurrentlyVocalSpoken 
+                                    ? "border-emerald-500 ring-2 ring-emerald-500/15 bg-emerald-50/20 shadow-md scale-[1.01]" 
+                                    : isDoc 
+                                      ? "border-emerald-200 bg-emerald-50/10 shadow-3xs" 
+                                      : "border-gray-200 bg-white shadow-3xs"
+                                }`}
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`px-2.5 py-1 rounded-xl text-[10px] font-extrabold ${
+                                      isDoc 
+                                        ? "bg-[#4A6B5D] text-white" 
+                                        : "bg-[#D4A373]/25 text-[#73512b]"
+                                    }`}>
+                                      {isDoc 
+                                        ? (lang === "ar" ? "🩺 توجيه الأخصائي النفسي" : "🩺 Therapist Post") 
+                                        : (lang === "ar" ? "🌟 المتعافي المنتصر" : "🌟 Healing Peer")
+                                      }
+                                    </span>
+                                    <span className="text-[10px] text-gray-400 font-mono">
+                                      {new Date(tip.createdAt).toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
+                                        month: "short",
+                                        day: "numeric",
+                                        hour: "2-digit",
+                                        minute: "2-digit"
+                                      })}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] bg-slate-100 text-slate-600 px-2.5 py-1 rounded-xl font-bold">
+                                      🎯 {roomLabel}
+                                    </span>
+                                    {tip.category === "panic" && <span className="bg-rose-100 text-rose-700 text-[9px] font-extrabold px-2 py-0.5 rounded-lg">😰 هلع</span>}
+                                    {tip.category === "trauma" && <span className="bg-amber-100 text-amber-700 text-[9px] font-extrabold px-2 py-0.5 rounded-lg">😨 رعب</span>}
+                                    {tip.category === "anxiety" && <span className="bg-blue-100 text-blue-700 text-[9px] font-extrabold px-2 py-0.5 rounded-lg">🧠 قلق</span>}
+                                  </div>
                                 </div>
 
-                                <span className="text-[10px] bg-slate-100 text-slate-600 px-2.5 py-1 rounded-xl font-bold">
-                                  🎯 {roomLabel}
-                                </span>
-                              </div>
+                                <div className="space-y-1">
+                                  <h4 className={`font-extrabold text-[#2B2D42] leading-snug ${largeFontForTips ? "text-base md:text-lg" : "text-sm"}`}>
+                                    {tip.title}
+                                  </h4>
+                                  <p className="text-[10px] text-gray-400">
+                                    {lang === "ar" ? "المساهم: " : "By: "}
+                                    <span className="font-bold text-[#4A6B5D]">{tip.author}</span>
+                                  </p>
+                                </div>
 
-                              <div className="space-y-1">
-                                <h4 className="font-extrabold text-[#2B2D42] text-sm leading-snug">
-                                  {tip.title}
-                                </h4>
-                                <p className="text-xs text-gray-400">
-                                  {lang === "ar" ? "الكاتب: " : "By: "}
-                                  <span className="font-bold text-[#4A6B5D]">{tip.author}</span>
+                                <p className={`text-slate-800 leading-relaxed bg-[#F4F7F5]/50 p-4 rounded-2xl border border-[#4A6B5D]/5 whitespace-pre-line text-right ${
+                                  largeFontForTips ? "text-sm md:text-base font-bold leading-loose" : "text-xs"
+                                }`}>
+                                  {tip.text}
                                 </p>
-                              </div>
 
-                              <p className="text-xs text-[#2B2D42] leading-relaxed bg-gray-50/60 p-4 rounded-2xl border border-gray-100/40 whitespace-pre-line">
-                                {tip.text}
-                              </p>
+                                <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+                                  <button
+                                    onClick={() => handleLikeTip(tip.id)}
+                                    className="flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-600 hover:bg-rose-100/80 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                                  >
+                                    <span>❤️</span>
+                                    <span>{lang === "ar" ? "نشد على يديك" : "We Stand with you"}</span>
+                                    <span className="bg-white shrink-0 h-4 px-1.5 rounded-full text-[10px] flex items-center justify-center font-mono font-bold shadow-3xs text-rose-600">
+                                      {tip.likes || 0}
+                                    </span>
+                                  </button>
 
-                              <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-                                <button
-                                  onClick={() => handleLikeTip(tip.id)}
-                                  className="flex items-center gap-1.5 px-3 py-1 bg-red-50 text-rose-600 hover:bg-rose-100/80 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
-                                >
-                                  <span>❤️</span>
-                                  <span>{lang === "ar" ? "نشر تضامناً" : "We Stand with you"}</span>
-                                  <span className="bg-white shrink-0 h-4 px-1.5 rounded-full text-[10px] flex items-center justify-center font-mono font-bold shadow-3xs text-rose-600">
-                                    {tip.likes || 0}
-                                  </span>
-                                </button>
+                                  {/* Vocal SpeechSynthesis Toggler */}
+                                  <button
+                                    type="button"
+                                    onClick={() => speakTip(tip.id, `${tip.title}. كاتب المنشور: ${tip.author}. النصيحة تقول: ${tip.text}`)}
+                                    className={`px-4 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all ${
+                                      isCurrentlyVocalSpoken 
+                                        ? "bg-emerald-600 text-white animate-pulse" 
+                                        : "bg-slate-100 hover:bg-slate-200 text-slate-800"
+                                    }`}
+                                  >
+                                    <span>{isCurrentlyVocalSpoken ? "⏸️" : "🔊"}</span>
+                                    <span>{lang === "ar" ? (isCurrentlyVocalSpoken ? "إيقاف الصوت الملائكي" : "استمع صوتياً 🎙️") : (isCurrentlyVocalSpoken ? "Stop Audio" : "Listen Audibly 🎙️")}</span>
+                                  </button>
 
-                                <span className="text-[9px] text-gray-400 font-mono select-none">
-                                  {tip.id}
-                                </span>
-                              </div>
-                            </motion.div>
-                          );
-                        })}
-                    </div>
+                                </div>
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
 

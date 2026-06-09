@@ -1,6 +1,6 @@
 {
-  "name": "سَكِينَة - منصة الدعم النفسي الرقمي الآمن",
-  "description": "منصة صحية نفسية رقمية مخصصة لدعم المتضررين في قطاع غزة بسرية وأمان تام وبدون أي تسجيل للبيانات الشخصية.",
+  "name": "Sakina - Safe Digital Psychological Support Platform",
+  "description": "A secure, non-tracking, and encrypted digital mental health platform designed to provide private trauma support and psychological aid.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

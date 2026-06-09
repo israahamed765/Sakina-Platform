@@ -59,6 +59,18 @@ function decryptText(text: string): string {
   }
 }
 
+// Arabic Text Normalization helper for secure answer comparisons
+function normalizeArabicText(txt: string): string {
+  if (!txt) return "";
+  return txt
+    .toLowerCase()
+    .trim()
+    .replace(/[\s\W_]+/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي");
+}
+
 // Salted cryptographic helpers for PIN-based reply safety
 function encryptReply(text: string, pinHash: string): string {
   try {
@@ -103,6 +115,8 @@ interface Consultation {
   riskLevel: "normal" | "high";
   aiDraft?: string;
   pinHash?: string; // Stored SHA-256 hash of the patient's 4-digit PIN, ensuring the plain PIN is never kept
+  securityQuestionId?: string; // Stored ID/Value of the selected safety security question
+  securityAnswerHash?: string; // Stored SHA-256 hash of the normalized security question answer
 }
 
 interface ChatMessage {
@@ -114,6 +128,8 @@ interface ChatMessage {
   timestamp: string;
   isDoctor: boolean;
   isDeleted: boolean;
+  isReported?: boolean;
+  reportCount?: number;
 }
 
 interface PrivateChat {
@@ -154,6 +170,7 @@ interface Database {
   privateChats: PrivateChat[];
   doctors?: Doctor[];
   tipsStories?: TipStory[];
+  assessments?: any[];
 }
 
 const DB_FILE = path.join(process.cwd(), "db.json");
@@ -257,7 +274,8 @@ function getInitialDB(): Database {
     ],
     blockedTokens: [],
     privateChats: [],
-    doctors: []
+    doctors: [],
+    assessments: []
   };
 }
 
@@ -287,6 +305,9 @@ function loadDB() {
       if (!db.privateChats) {
         db.privateChats = [];
       }
+      if (!db.assessments) {
+        db.assessments = [];
+      }
     } else {
       saveDB();
     }
@@ -306,7 +327,43 @@ function saveDB() {
 
 loadDB();
 
-// Smart Keyword Assessment and Gemini Triage Assist
+// Smart Keyword Assessment and Gemini Triage Assist with Exponential Backoff retry
+async function generateContentWithRetry(
+  aiClient: GoogleGenAI,
+  options: { model: string; contents: string; config?: any },
+  maxRetries = 3,
+  initialDelayMs = 1000
+): Promise<any> {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await aiClient.models.generateContent(options);
+    } catch (err: any) {
+      attempt++;
+      const errorMsg = err?.message || "";
+      const statusCode = err?.status || 0;
+      
+      const isTransient = 
+        statusCode === 503 || 
+        statusCode === 429 || 
+        statusCode === 500 ||
+        errorMsg.includes("503") || 
+        errorMsg.includes("429") || 
+        errorMsg.includes("500") ||
+        errorMsg.includes("UNAVAILABLE") ||
+        errorMsg.includes("RESOURCE_EXHAUSTED");
+
+      if (isTransient && attempt < maxRetries) {
+        const delay = initialDelayMs * Math.pow(2, attempt - 1);
+        console.warn(`Gemini API: Encountered transient error (${errorMsg}). Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 async function generateTriageAndDraft(text: string, category: string): Promise<{ risk: "normal" | "high", draft: string }> {
   // Static check first (extremely safe fallback)
   const highRiskKeywords = ["أنتحر", "الانتحار", "أنهي حياتي", "أموت نفسي", "الموت أفضل", "أذبح نفسي", "تعبت من الحياة", "suicide", "kill myself", "end my life"];
@@ -332,7 +389,7 @@ async function generateTriageAndDraft(text: string, category: string): Promise<{
 
 صغ الإجابة كاملة باللغة العربية بشكل منسق وجاهز للطبيب.`;
 
-      const response = await ai.models.generateContent({
+      const response = await generateContentWithRetry(ai, {
         model: "gemini-3.5-flash",
         contents: prompt,
       });
@@ -343,7 +400,7 @@ async function generateTriageAndDraft(text: string, category: string): Promise<{
       }
     } catch (err) {
       console.error("Gemini triage logic error:", err);
-      aiDraftResult = "يتعذر تشغيل المساعد الذكي حالياً. يرجى مراجعة تفاصيل الحالة وتقييمها يدوياً للسرعة.";
+      aiDraftResult = "يتعذر تشغيل المساعد الذكي حالياً بسبب زيادة الضغط المؤقت على السحابة الذكية. يرجى مراجعة تفاصيل الحالة وتقييمها يدوياً للسرعة.";
     }
   } else {
     aiDraftResult = "لم ينشط الذكاء الاصطناعي بسبب عدم تفعيل مفتاح الخدمة API Key. تم الاعتماد على نظام المراقبة المحلي الذكي لتصنيف خطورة الاستشارة.";
@@ -360,7 +417,7 @@ async function generateTriageAndDraft(text: string, category: string): Promise<{
 // 1. Send Consultation (Anonymous)
 app.post("/api/consultations", async (req, res) => {
   try {
-    const { category, text, pin } = req.body;
+    const { category, text, pin, securityQuestionId, securityAnswer } = req.body;
     if (!text || !category) {
       return res.status(400).json({ status: "error", error: "Please enter category and text content" });
     }
@@ -377,6 +434,13 @@ app.post("/api/consultations", async (req, res) => {
       }
     }
 
+    // Set up security question answer hash
+    let securityAnswerHash: string | undefined = undefined;
+    if (securityQuestionId && securityAnswer && securityAnswer.trim() !== "") {
+      const normalizedAns = normalizeArabicText(securityAnswer);
+      securityAnswerHash = crypto.createHash("sha256").update(normalizedAns).digest("hex");
+    }
+
     // AI assessment in background
     const assessment = await generateTriageAndDraft(text, category);
 
@@ -388,7 +452,9 @@ app.post("/api/consultations", async (req, res) => {
       status: "pending",
       riskLevel: assessment.risk,
       aiDraft: assessment.draft,
-      pinHash: pinHash
+      pinHash: pinHash,
+      securityQuestionId,
+      securityAnswerHash
     };
 
     db.consultations.unshift(newConsultation);
@@ -398,7 +464,8 @@ app.post("/api/consultations", async (req, res) => {
       status: "success",
       trackingId: randomID,
       riskLevel: assessment.risk,
-      hasPin: !!pinHash
+      hasPin: !!pinHash,
+      hasSecurityQuestion: !!securityAnswerHash
     });
   } catch (err) {
     console.error(err);
@@ -411,6 +478,9 @@ app.get("/api/consultations/:id", (req, res) => {
   try {
     const { id } = req.params;
     const clientPin = req.query.pin as string;
+    const clientQuestionId = req.query.questionId as string;
+    const clientAnswer = req.query.answer as string;
+    
     const consultation = db.consultations.find(c => c.id === id);
 
     if (!consultation) {
@@ -419,17 +489,38 @@ app.get("/api/consultations/:id", (req, res) => {
 
     // Verify 4-digit secure PIN if applicable
     if (consultation.pinHash) {
-      if (!clientPin) {
-        return res.status(403).json({
-          status: "error",
-          error: "سريّة فائقة: هذه الاستشارة محمية برمز مرور (PIN). يرجى كتابة الرمز المكون من 4 أرقام لقراءة الرد."
-        });
+      let isAuthorized = false;
+
+      // 1. Try PIN match
+      if (clientPin) {
+        const hashedClientPin = crypto.createHash("sha256").update(clientPin.trim()).digest("hex");
+        if (hashedClientPin === consultation.pinHash) {
+          isAuthorized = true;
+        }
+      } 
+      // 2. Or try security question match
+      else if (clientQuestionId && clientAnswer) {
+        if (consultation.securityQuestionId === clientQuestionId && consultation.securityAnswerHash) {
+          const normalizedInput = normalizeArabicText(clientAnswer);
+          const hashedInput = crypto.createHash("sha256").update(normalizedInput).digest("hex");
+          if (hashedInput === consultation.securityAnswerHash) {
+            isAuthorized = true;
+          }
+        }
       }
-      const hashedClientPin = crypto.createHash("sha256").update(clientPin.trim()).digest("hex");
-      if (hashedClientPin !== consultation.pinHash) {
+
+      if (!isAuthorized) {
+        // If recovery attempted but failed
+        if (clientQuestionId && clientAnswer) {
+          return res.status(403).json({
+            status: "error",
+            error: "إجابة سؤال الأمان غير صحيحة أو لا تتطابق مع البيانات المسجلة لهذه الاستشارة."
+          });
+        }
+        
         return res.status(403).json({
           status: "error",
-          error: "رمز الأمان المكون من 4 أرقام غير متطابق. تم حجب تفاصيل الحالة والرد حمايةً للخصوصية الإكلينيكية الفائقة."
+          error: "سريّة فائقة: هذه الاستشارة محمية برمز مرور (PIN). يرجى كتابة الرمز المكون من 4 أرقام أو الإجابة على سؤال الأمان لقراءة الرد."
         });
       }
     }
@@ -854,6 +945,86 @@ app.get("/api/doctor/statistics", requireDoctorAuth, (req, res) => {
   } catch (err: any) {
     console.error("Error in /api/doctor/statistics:", err);
     res.status(500).json({ status: "error", error: err.message || "Failed to load statistics" });
+  }
+});
+
+// Report message as abusive
+app.post("/api/rooms/message/:id/report", (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!db.messages) db.messages = [];
+    const idx = db.messages.findIndex(m => m.id === id);
+    if (idx !== -1) {
+      db.messages[idx].isReported = true;
+      db.messages[idx].reportCount = (db.messages[idx].reportCount || 0) + 1;
+      saveDB();
+      return res.json({ status: "success", isReported: true, reportCount: db.messages[idx].reportCount });
+    }
+    res.status(404).json({ status: "error", error: "الرسالة غير متوفرة" });
+  } catch (err: any) {
+    console.error("Error reporting message:", err);
+    res.status(500).json({ status: "error", error: "Internal server error" });
+  }
+});
+
+// Save assessment score under pseudo-anonymous secret account
+app.post("/api/assessments", (req, res) => {
+  try {
+    const { username, pinHash, score, categoryScores, timestamp, securityQuestionId, securityAnswer } = req.body;
+    if (!username || !pinHash || score === undefined) {
+      return res.status(400).json({ status: "error", error: "الرجاء توفير جميع المعطيات لتخزين رصيد الصمود" });
+    }
+    if (!db.assessments) db.assessments = [];
+
+    let securityAnswerHash: string | undefined = undefined;
+    if (securityQuestionId && securityAnswer && securityAnswer.trim() !== "") {
+      const normalizedAns = normalizeArabicText(securityAnswer);
+      securityAnswerHash = crypto.createHash("sha256").update(normalizedAns).digest("hex");
+    }
+
+    db.assessments.push({ 
+      username, 
+      pinHash, 
+      score, 
+      categoryScores, 
+      timestamp: timestamp || new Date().toISOString(),
+      securityQuestionId,
+      securityAnswerHash
+    });
+    saveDB();
+    res.json({ status: "success" });
+  } catch (err: any) {
+    console.error("Error saving assessment:", err);
+    res.status(500).json({ status: "error", error: "Internal server error" });
+  }
+});
+
+// Retrieve assessment scores for pseudo-anonymous secret account
+app.post("/api/assessments/retrieve", (req, res) => {
+  try {
+    const { username, pinHash, securityQuestionId, securityAnswer } = req.body;
+    if (!username) {
+      return res.status(400).json({ status: "error", error: "الرجاء إدخال اسم الحساب السري الخاص بك" });
+    }
+    if (!db.assessments) db.assessments = [];
+
+    let list: any[] = [];
+    if (pinHash) {
+      list = db.assessments.filter(a => a.username === username && a.pinHash === pinHash);
+    } else if (securityQuestionId && securityAnswer) {
+      const normalizedAns = normalizeArabicText(securityAnswer);
+      const computedHash = crypto.createHash("sha256").update(normalizedAns).digest("hex");
+      list = db.assessments.filter(a => a.username === username && a.securityQuestionId === securityQuestionId && a.securityAnswerHash === computedHash);
+      if (list.length === 0) {
+        return res.status(403).json({ status: "error", error: "إجابة سؤال الأمان المخصصة غير صحيحة للتحقق من مسار صلابتك." });
+      }
+    } else {
+      return res.status(400).json({ status: "error", error: "الرجاء إدخال الرمز السري PIN أو توفير سؤال الأمان لإعادة تشقاق الاسترداد." });
+    }
+    res.json({ status: "success", assessments: list });
+  } catch (err: any) {
+    console.error("Error retrieving assessments:", err);
+    res.status(500).json({ status: "error", error: "Internal server error" });
   }
 });
 
